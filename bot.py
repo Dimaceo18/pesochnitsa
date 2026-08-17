@@ -28,56 +28,35 @@ dp.middleware.setup(LoggingMiddleware())
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
     """
-    Разделяет текст на заголовок (первые 2-3 строки до первого абзаца) 
-    и основной текст.
-    Возвращает (заголовок, основной_текст)
+    Разделяет текст на заголовок (первые 2-3 предложения) и основной текст.
     """
     if not text:
         return "", ""
     
-    # Убираем лишние пробелы и разбиваем на строки
-    lines = text.strip().split('\n')
-    lines = [line.strip() for line in lines if line.strip()]
+    # Убираем лишние пробелы и разбиваем на предложения
+    # Разбиваем по точкам с пробелом, вопросительным и восклицательным знакам
+    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+    sentences = [s.strip() for s in sentences if s.strip()]
     
-    if len(lines) <= 3:
-        # Если текста мало, всё идет в заголовок
-        return "\n".join(lines), ""
+    if len(sentences) <= 2:
+        # Если предложений мало, всё идет в заголовок
+        return text, ""
     
-    # Ищем первый абзац (пустая строка или строка с жирным текстом)
-    title_lines = []
-    content_lines = []
+    # Заголовок - первые 2-3 предложения
+    title_sentences = sentences[:3]
+    title = ". ".join(title_sentences)
     
-    for i, line in enumerate(lines):
-        # Если это пустая строка - конец заголовка
-        if not line:
-            content_lines = lines[i+1:] if i+1 < len(lines) else []
-            break
-        
-        # Если это начало абзаца (строка без маркеров и не начинается с жирного)
-        # И уже есть хотя бы 2 строки в заголовке
-        if len(title_lines) >= 2 and not line.startswith('**') and not line.startswith('*'):
-            content_lines = lines[i:]
-            break
-        
-        # Если уже набрали 3 строки - остальное в основной текст
-        if len(title_lines) >= 3:
-            content_lines = lines[i:]
-            break
-        
-        # Добавляем строку в заголовок
-        title_lines.append(line)
+    # Основной текст - всё остальное
+    content_sentences = sentences[3:]
+    content = ". ".join(content_sentences)
     
-    # Если заголовок пустой, берем первые 2 строки
-    if not title_lines and lines:
-        title_lines = lines[:2]
-        content_lines = lines[2:]
-    
-    # Если контент пустой, но есть строки после заголовка
-    if not content_lines and len(lines) > len(title_lines):
-        content_lines = lines[len(title_lines):]
-    
-    title = "\n".join(title_lines) if title_lines else ""
-    content = "\n".join(content_lines) if content_lines else ""
+    # Если заголовок слишком длинный (более 200 символов), обрезаем
+    if len(title) > 200:
+        # Берем первые 2 предложения
+        title_sentences = sentences[:2]
+        title = ". ".join(title_sentences)
+        content_sentences = sentences[2:]
+        content = ". ".join(content_sentences)
     
     return title, content
 
@@ -113,13 +92,13 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
 
     # Шрифты Inter
     try:
-        font_bold = ImageFont.truetype(FONT_PATH_BOLD, 72)
+        font_bold = ImageFont.truetype(FONT_PATH_BOLD, 68)
     except:
         font_bold = ImageFont.load_default()
         logging.warning(f"Шрифт {FONT_PATH_BOLD} не найден, использую дефолтный")
 
     try:
-        font_reg = ImageFont.truetype(FONT_PATH_REG, 48)
+        font_reg = ImageFont.truetype(FONT_PATH_REG, 44)
     except:
         font_reg = ImageFont.load_default()
         logging.warning(f"Шрифт {FONT_PATH_REG} не найден, использую дефолтный")
@@ -127,9 +106,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # ========== ЗАГОЛОВОК ==========
     if title:
         PADDING_X = 5
-        MAX_TITLE_WIDTH = W - (PADDING_X * 2)
+        MAX_TITLE_WIDTH = W - (PADDING_X * 2) - 40  # Учитываем отступы подложки
         
-        def wrap_title(text, font, max_width):
+        def wrap_text(text, font, max_width):
+            """Переносит текст по словам с учетом максимальной ширины"""
             words = text.split()
             lines = []
             current_line = []
@@ -151,7 +131,12 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             
             return lines
         
-        title_lines = wrap_title(title, font_bold, MAX_TITLE_WIDTH)
+        # Ограничиваем заголовок до 3 строк
+        title_lines = wrap_text(title, font_bold, MAX_TITLE_WIDTH)
+        if len(title_lines) > 3:
+            title_lines = title_lines[:3]
+            title_lines[2] = title_lines[2] + "..."
+        
         title_text = "\n".join(title_lines)
         
         title_bbox = draw.textbbox((0, 0), title_text, font=font_bold)
@@ -161,7 +146,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_x = (W - title_w) // 2
         title_y = 870 - (title_h // 2)
         
-        # ===== ТЕМНАЯ ПОДЛОЖКА (без градиента) =====
+        # ===== ТЕМНАЯ ПОДЛОЖКА =====
         padding = 25
         rect_x1 = title_x - padding
         rect_y1 = title_y - padding
@@ -170,11 +155,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         radius = 15
         
-        # Темная подложка (почти черная, но чуть светлее)
+        # Темная подложка
         draw.rounded_rectangle(
             [rect_x1, rect_y1, rect_x2, rect_y2],
             radius=radius,
-            fill=(30, 30, 30, 220),  # Темно-серая, почти черная
+            fill=(30, 30, 30, 220),
             outline=None
         )
         
@@ -203,12 +188,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
 
     # ========== ОСНОВНОЙ ТЕКСТ ==========
     if content:
-        # Четкие отступы: строго в черной зоне, ниже заголовка
-        MAX_TEXT_H = H - HALF_H - 80  # Вся черная зона минус отступы
+        MAX_TEXT_H = H - HALF_H - 80
         MAX_TEXT_W = W - 60
 
         def fit_text(text, max_w, max_h):
-            size = 48
+            size = 44
             while size > 20:
                 try:
                     test_font = ImageFont.truetype(FONT_PATH_REG, size)
@@ -232,7 +216,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         th = bbox[3] - bbox[1]
         tw = bbox[2] - bbox[0]
         
-        # Центрируем по горизонтали и вертикали в черной зоне
         text_x = (W - tw) // 2
         text_y = HALF_H + 40 + (MAX_TEXT_H - th) // 2
 
@@ -270,7 +253,7 @@ async def start(message: types.Message):
         "📱 Привет! Я делаю сторис 50/50 из репостов!\n\n"
         "Просто отправь мне РЕПОСТ любого поста из Telegram, и я:\n"
         "1️⃣ Возьму фото из поста\n"
-        "2️⃣ Сделаю заголовок из первых 2-3 строк\n"
+        "2️⃣ Сделаю заголовок из первых 2-3 предложений\n"
         "3️⃣ Остальной текст помещу в черную зону\n\n"
         "Или отправь данные вручную:\n"
         "1. ФОТО\n"
@@ -310,14 +293,17 @@ async def handle_forward(message: types.Message):
         await message.answer("❌ В репосте нет фото! Пожалуйста, отправь репост с изображением.")
         return
     
+    # Удаляем текст "Текст отсутствует" если он есть
+    text = text.replace("**Текст отсутствует**", "").strip()
+    
     # Парсим текст на заголовок и основной текст
     title, content = parse_text(text)
     
-    # Если нет заголовка, берем первые 2 строки
+    # Если нет заголовка, берем первые 2 предложения
     if not title and text:
-        lines = text.strip().split('\n')
-        title = "\n".join(lines[:2])
-        content = "\n".join(lines[2:])
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        title = ". ".join(sentences[:2])
+        content = ". ".join(sentences[2:])
     
     # Если нет текста - используем дефолтные значения
     if not title:
