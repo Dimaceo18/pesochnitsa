@@ -76,17 +76,67 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         font_reg = ImageFont.load_default()
         logging.warning(f"Шрифт {FONT_PATH_REG} не найден, использую дефолтный")
 
-    # Заголовок (жирный)
-    title_lines = textwrap.wrap(title, width=25)
+    # ========== ЗАГОЛОВОК (с отступами и подложкой) ==========
+    # Отступы по 5 пикселей слева и справа
+    PADDING_X = 5
+    MAX_TITLE_WIDTH = W - (PADDING_X * 2)  # 1080 - 10 = 1070px
+    
+    # Разбиваем заголовок на строки с учетом ширины
+    def wrap_title(text, font, max_width):
+        words = text.split()
+        lines = []
+        current_line = []
+        
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            bbox = draw.textbbox((0, 0), test_line, font=font)
+            line_width = bbox[2] - bbox[0]
+            
+            if line_width <= max_width:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        return lines
+    
+    title_lines = wrap_title(title, font_bold, MAX_TITLE_WIDTH)
     title_text = "\n".join(title_lines)
+    
+    # Вычисляем размеры заголовка
     title_bbox = draw.textbbox((0, 0), title_text, font=font_bold)
     title_w = title_bbox[2] - title_bbox[0]
     title_h = title_bbox[3] - title_bbox[1]
+    
+    # Позиция заголовка (по центру)
     title_x = (W - title_w) // 2
     title_y = 870 - (title_h // 2)
+    
+    # ===== ПОДЛОЖКА ДЛЯ ЗАГОЛОВКА (чтобы выделить) =====
+    # Полупрозрачный черный прямоугольник с закруглениями
+    padding = 20  # Отступ текста от краев подложки
+    rect_x1 = title_x - padding
+    rect_y1 = title_y - padding
+    rect_x2 = title_x + title_w + padding
+    rect_y2 = title_y + title_h + padding
+    
+    # Рисуем подложку с закругленными углами
+    radius = 15  # Радиус закругления
+    draw.rounded_rectangle(
+        [rect_x1, rect_y1, rect_x2, rect_y2],
+        radius=radius,
+        fill=(0, 0, 0, 180),  # Черный с прозрачностью 70%
+        outline=None
+    )
+    
+    # Рисуем сам заголовок поверх подложки
     draw.text((title_x, title_y), title_text, font=font_bold, fill='white')
 
-    # Основной текст (черный/жирный шрифт Inter-Black)
+    # ========== ОСНОВНОЙ ТЕКСТ ==========
     MAX_TEXT_H = H - HALF_H - 80
     MAX_TEXT_W = W - 60
 
