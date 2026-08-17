@@ -7,8 +7,11 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 import textwrap
 
 # ========== КОНФИГ ==========
-# ВСТАВЬ СВОЙ ТОКЕН СЮДА (получи у @BotFather)
-API_TOKEN = "ВАШ_ТОКЕН_СЮДА"
+# Берем токен из переменных окружения Render
+API_TOKEN = os.getenv("BOT_TOKEN")
+
+if not API_TOKEN:
+    raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
 FONT_PATH_BOLD = "arialbd.ttf"
 FONT_PATH_REG = "arial.ttf"
@@ -64,13 +67,13 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         font_bold = ImageFont.truetype(FONT_PATH_BOLD, 72)
     except:
         font_bold = ImageFont.load_default()
-        logging.warning("Шрифт arialbd.ttf не найден")
+        logging.warning("Шрифт arialbd.ttf не найден, использую дефолтный")
 
     try:
         font_reg = ImageFont.truetype(FONT_PATH_REG, 48)
     except:
         font_reg = ImageFont.load_default()
-        logging.warning("Шрифт arial.ttf не найден")
+        logging.warning("Шрифт arial.ttf не найден, использую дефолтный")
 
     # Заголовок
     title_lines = textwrap.wrap(title, width=25)
