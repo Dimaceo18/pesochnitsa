@@ -1,10 +1,9 @@
 import os
 import logging
-import io
 from PIL import Image, ImageDraw, ImageFont
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, InputFile  # ← ИЗМЕНЕНО: FSInputFile → InputFile
-from aiogram.filters import Command
+from aiogram.types import Message, InputFile
+from aiogram.contrib.middlewares.logging import LoggingMiddleware
 import textwrap
 
 # ========== КОНФИГ ==========
@@ -17,7 +16,8 @@ logging.basicConfig(level=logging.INFO)
 
 # ========== ИНИЦИАЛИЗАЦИЯ ==========
 bot = Bot(token=API_TOKEN)
-dp = Dispatcher()
+dp = Dispatcher(bot)
+dp.middleware.setup(LoggingMiddleware())
 
 # ========== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
@@ -120,8 +120,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
 # ========== ХЕНДЛЕРЫ ==========
 user_data = {}
 
-@dp.message(Command("start"))
-async def start(message: Message):
+@dp.message_handler(commands=['start'])
+async def start(message: types.Message):
     await message.answer(
         "📱 Привет! Я делаю сторис 50/50.\n\n"
         "1. Отправь мне ФОТО\n"
@@ -131,8 +131,8 @@ async def start(message: Message):
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
 
-@dp.message(lambda msg: msg.photo)
-async def handle_photo(message: Message):
+@dp.message_handler(content_types=['photo'])
+async def handle_photo(message: types.Message):
     user_id = message.from_user.id
     if user_id not in user_data:
         await start(message)
@@ -146,11 +146,15 @@ async def handle_photo(message: Message):
     user_data[user_id]["step"] = "waiting_title"
     await message.answer("✅ Фото принято! Теперь отправь ЗАГОЛОВОК (текстом).")
 
-@dp.message(lambda msg: msg.text and not msg.text.startswith("/"))
-async def handle_text(message: Message):
+@dp.message_handler(content_types=['text'])
+async def handle_text(message: types.Message):
     user_id = message.from_user.id
     if user_id not in user_data:
         await start(message)
+        return
+
+    # Игнорируем команды
+    if message.text.startswith('/'):
         return
 
     step = user_data[user_id].get("step", "")
@@ -172,20 +176,24 @@ async def handle_text(message: Message):
 
         try:
             output = await generate_story(photo_path, title, content)
-            # ОТПРАВЛЯЕМ ЧЕРЕЗ InputFile (вместо FSInputFile)
             await bot.send_photo(
                 chat_id=user_id,
-                photo=InputFile(output),  # ← ИЗМЕНЕНО
+                photo=InputFile(output),
                 caption="✅ Готово! Твоя сторис 50/50."
             )
-            os.remove(photo_path)
-            os.remove(output)
+            # Чистим временные файлы
+            if os.path.exists(photo_path):
+                os.remove(photo_path)
+            if os.path.exists(output):
+                os.remove(output)
             del user_data[user_id]
         except Exception as e:
             await message.answer(f"❌ Ошибка: {str(e)}")
-            del user_data[user_id]
+            if user_id in user_data:
+                del user_data[user_id]
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     print("🚀 Бот запущен...")
-    dp.run_polling(bot)
+    from aiogram import executor
+    executor.start_polling(dp, skip_updates=True)
