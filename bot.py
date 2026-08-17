@@ -13,8 +13,9 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
-FONT_PATH_BOLD = "arialbd.ttf"
-FONT_PATH_REG = "arial.ttf"
+# Шрифты Inter
+FONT_PATH_BOLD = "Inter-Bold.ttf"      # Жирный для заголовка
+FONT_PATH_REG = "Inter-Black.ttf"      # Черный для основного текста
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -62,20 +63,20 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
 
     draw = ImageDraw.Draw(canvas)
 
-    # Шрифты
+    # Шрифты Inter
     try:
         font_bold = ImageFont.truetype(FONT_PATH_BOLD, 72)
     except:
         font_bold = ImageFont.load_default()
-        logging.warning("Шрифт arialbd.ttf не найден, использую дефолтный")
+        logging.warning(f"Шрифт {FONT_PATH_BOLD} не найден, использую дефолтный")
 
     try:
         font_reg = ImageFont.truetype(FONT_PATH_REG, 48)
     except:
         font_reg = ImageFont.load_default()
-        logging.warning("Шрифт arial.ttf не найден, использую дефолтный")
+        logging.warning(f"Шрифт {FONT_PATH_REG} не найден, использую дефолтный")
 
-    # Заголовок
+    # Заголовок (жирный)
     title_lines = textwrap.wrap(title, width=25)
     title_text = "\n".join(title_lines)
     title_bbox = draw.textbbox((0, 0), title_text, font=font_bold)
@@ -85,7 +86,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     title_y = 870 - (title_h // 2)
     draw.text((title_x, title_y), title_text, font=font_bold, fill='white')
 
-    # Основной текст
+    # Основной текст (черный/жирный шрифт Inter-Black)
     MAX_TEXT_H = H - HALF_H - 80
     MAX_TEXT_W = W - 60
 
@@ -197,6 +198,6 @@ async def handle_text(message: types.Message):
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
-    print("🚀 Бот запущен...")
+    print("🚀 Бот запущен с шрифтами Inter...")
     from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
