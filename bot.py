@@ -64,7 +64,7 @@ def parse_text(text: str) -> tuple:
     
     return title, content
 
-# ========== ГЕНЕРАЦИЯ ИЗОБРАЖЕНИЯ ==========
+# ========== ГЕНЕРАЦИЯ СТОРИС (ОБЩАЯ ФУНКЦИЯ) ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
     W, H = 1080, 1920
     HALF_H = H // 2
@@ -72,7 +72,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # Черный холст
     canvas = Image.new('RGB', (W, H), color='black')
 
-    # Вставляем фото
+    # Вставляем фото (занимает верхнюю половину)
     photo = Image.open(photo_path).convert("RGB")
     photo_ratio = photo.width / photo.height
     target_ratio = W / HALF_H
@@ -157,7 +157,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_x = (W - title_w) // 2
         title_y = 870 - (title_h // 2)
         
-        # Подложка с рамкой
+        # Темно-серая подложка с градиентом
         padding = 25
         rect_x1 = title_x - padding
         rect_y1 = title_y - padding
@@ -165,14 +165,24 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         rect_y2 = title_y + title_h + padding
         
         radius = 15
+        rect_w = rect_x2 - rect_x1
+        rect_h = rect_y2 - rect_y1
         
-        # Полупрозрачная черная подложка
-        draw.rounded_rectangle(
-            [rect_x1, rect_y1, rect_x2, rect_y2],
-            radius=radius,
-            fill=(0, 0, 0, 200),
-            outline=None
-        )
+        # Создаем градиент для подложки
+        gradient_bg = Image.new('RGBA', (rect_w, rect_h), (0, 0, 0, 0))
+        grad_draw = ImageDraw.Draw(gradient_bg)
+        
+        for i in range(rect_h):
+            gray_value = int(128 + (i / rect_h) * 52)
+            alpha = 220
+            grad_draw.rectangle([(0, i), (rect_w, i + 1)], fill=(gray_value, gray_value, gray_value, alpha))
+        
+        # Маска с закругленными углами
+        mask = Image.new('L', (rect_w, rect_h), 0)
+        mask_draw = ImageDraw.Draw(mask)
+        mask_draw.rounded_rectangle([(0, 0), (rect_w, rect_h)], radius=radius, fill=255)
+        
+        canvas.paste(gradient_bg, (rect_x1, rect_y1), mask)
         
         # Белая рамка
         draw.rounded_rectangle(
@@ -190,7 +200,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
              rect_x2 - inner_padding, rect_y2 - inner_padding],
             radius=radius - 2,
             fill=None,
-            outline=(255, 255, 255, 100),
+            outline=(255, 255, 255, 80),
             width=1
         )
         
@@ -234,6 +244,25 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     canvas.save(output_path, "PNG")
     return output_path
 
+# ========== ОБЩАЯ ФУНКЦИЯ ДЛЯ ОБРАБОТКИ ==========
+async def process_story(user_id: int, photo_path: str, title: str, content: str, message: types.Message):
+    """Общая функция для создания сторис из фото, заголовка и текста"""
+    try:
+        output = await generate_story(photo_path, title, content)
+        await bot.send_photo(
+            chat_id=user_id,
+            photo=InputFile(output),
+            caption="✅ Готово! Твоя сторис 50/50."
+        )
+        if os.path.exists(photo_path):
+            os.remove(photo_path)
+        if os.path.exists(output):
+            os.remove(output)
+        return True
+    except Exception as e:
+        await message.answer(f"❌ Ошибка: {str(e)}")
+        return False
+
 # ========== ХЕНДЛЕРЫ ==========
 user_data = {}
 
@@ -252,9 +281,77 @@ async def start(message: types.Message):
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
 
+# ========== ОБРАБОТКА РЕПОСТОВ ==========
+@dp.message_handler(content_types=['text', 'photo', 'document'])
+async def handle_forward(message: types.Message):
+    user_id = message.from_user.id
+    
+    # Проверяем, является ли сообщение репостом
+    is_forward = message.forward_from or message.forward_from_chat or message.forward_date
+    
+    if not is_forward:
+        # Если не репост - пропускаем, обработается другими хендлерами
+        return
+    
+    await message.answer("📥 Обнаружен репост! Обрабатываю...")
+    
+    # Получаем текст из репоста
+    text = message.text or message.caption or ""
+    
+    # Ищем фото в репосте
+    photo_file_path = None
+    
+    if message.photo:
+        # Фото в репосте
+        file = await bot.get_file(message.photo[-1].file_id)
+        photo_file_path = f"temp_{user_id}_forward.jpg"
+        await bot.download_file(file.file_path, photo_file_path)
+    elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
+        # Фото как документ
+        file = await bot.get_file(message.document.file_id)
+        photo_file_path = f"temp_{user_id}_forward.jpg"
+        await bot.download_file(file.file_path, photo_file_path)
+    else:
+        await message.answer("❌ В репосте нет фото! Пожалуйста, отправь репост с изображением.")
+        return
+    
+    # Если есть медиагруппа (несколько фото)
+    if message.media_group_id:
+        await message.answer("⚠️ Обнаружено несколько фото. Я возьму первое изображение.")
+    
+    # Парсим текст на заголовок и основной текст
+    title, content = parse_text(text)
+    
+    # Если нет заголовка, берем первые 2 строки
+    if not title and text:
+        lines = text.strip().split('\n')
+        title = "\n".join(lines[:2])
+        content = "\n".join(lines[2:])
+    
+    # Если нет текста - используем дефолтные значения
+    if not title:
+        title = "📌 Заголовок"
+    if not content:
+        content = "Текст отсутствует"
+    
+    await message.answer(f"📝 Заголовок: {title[:50]}...\n\n⏳ Генерирую сторис...")
+    
+    # Используем ТУ ЖЕ САМУЮ функцию, что и для ручного ввода
+    success = await process_story(user_id, photo_file_path, title, content, message)
+    
+    if success:
+        # Очищаем данные пользователя
+        if user_id in user_data:
+            del user_data[user_id]
+
+# ========== ОБРАБОТКА РУЧНОГО ВВОДА ==========
 @dp.message_handler(content_types=['photo'])
 async def handle_photo(message: types.Message):
     user_id = message.from_user.id
+    
+    # Если это репост с фото - уже обработано в handle_forward
+    if message.forward_from or message.forward_from_chat or message.forward_date:
+        return
     
     # Проверяем, есть ли подпись к фото (текст)
     caption = message.caption or ""
@@ -270,86 +367,30 @@ async def handle_photo(message: types.Message):
         
         await message.answer("⏳ Генерирую сторис из фото и подписи...")
         
-        try:
-            output = await generate_story(file_path, title, content)
-            await bot.send_photo(
-                chat_id=user_id,
-                photo=InputFile(output),
-                caption="✅ Готово! Сторис создана автоматически из подписи к фото."
-            )
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            if os.path.exists(output):
-                os.remove(output)
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {str(e)}")
+        await process_story(user_id, file_path, title, content, message)
         return
     
     # Если фото без подписи - ждем текст отдельно
     if user_id not in user_data:
-        await start(message)
-        return
-
+        user_data[user_id] = {"step": "waiting_photo"}
+    
     file = await bot.get_file(message.photo[-1].file_id)
     file_path = f"temp_{user_id}.jpg"
     await bot.download_file(file.file_path, file_path)
 
     user_data[user_id]["photo"] = file_path
     user_data[user_id]["step"] = "waiting_title"
-    await message.answer("✅ Фото принято! Теперь отправь ЗАГОЛОВОК (текстом) или сразу ОСНОВНОЙ ТЕКСТ.")
+    await message.answer("✅ Фото принято! Теперь отправь ЗАГОЛОВОК (текстом).")
 
 @dp.message_handler(content_types=['text'])
 async def handle_text(message: types.Message):
     user_id = message.from_user.id
     
-    # Проверяем, является ли сообщение репостом (forward)
-    if message.forward_from or message.forward_from_chat:
-        # Это репост!
-        await message.answer("📥 Обнаружен репост! Обрабатываю...")
-        
-        # Получаем текст репоста
-        text = message.text or message.caption or ""
-        
-        # Ищем фото в репосте
-        if message.photo:
-            # Если есть фото в репосте
-            file = await bot.get_file(message.photo[-1].file_id)
-            file_path = f"temp_{user_id}_forward.jpg"
-            await bot.download_file(file.file_path, file_path)
-        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
-            # Если фото как документ
-            file = await bot.get_file(message.document.file_id)
-            file_path = f"temp_{user_id}_forward.jpg"
-            await bot.download_file(file.file_path, file_path)
-        else:
-            await message.answer("❌ В репосте нет фото! Пожалуйста, отправь репост с изображением.")
-            return
-        
-        # Парсим текст
-        title, content = parse_text(text)
-        
-        if not title and not content:
-            await message.answer("❌ В репосте нет текста! Добавь текст к посту.")
-            return
-        
-        await message.answer(f"📝 Заголовок: {title[:50]}...\n\n⏳ Генерирую сторис...")
-        
-        try:
-            output = await generate_story(file_path, title, content)
-            await bot.send_photo(
-                chat_id=user_id,
-                photo=InputFile(output),
-                caption="✅ Готово! Сторис создана из репоста."
-            )
-            if os.path.exists(file_path):
-                os.remove(file_path)
-            if os.path.exists(output):
-                os.remove(output)
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {str(e)}")
+    # Если это репост с текстом - уже обработано в handle_forward
+    if message.forward_from or message.forward_from_chat or message.forward_date:
         return
     
-    # Обычный текст (не репост)
+    # Игнорируем команды
     if message.text.startswith('/'):
         return
     
@@ -374,22 +415,10 @@ async def handle_text(message: types.Message):
         title = user_data[user_id]["title"]
         content = user_data[user_id]["content"]
 
-        try:
-            output = await generate_story(photo_path, title, content)
-            await bot.send_photo(
-                chat_id=user_id,
-                photo=InputFile(output),
-                caption="✅ Готово! Твоя сторис 50/50."
-            )
-            if os.path.exists(photo_path):
-                os.remove(photo_path)
-            if os.path.exists(output):
-                os.remove(output)
+        await process_story(user_id, photo_path, title, content, message)
+        
+        if user_id in user_data:
             del user_data[user_id]
-        except Exception as e:
-            await message.answer(f"❌ Ошибка: {str(e)}")
-            if user_id in user_data:
-                del user_data[user_id]
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
