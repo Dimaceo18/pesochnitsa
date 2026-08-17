@@ -1,0 +1,15 @@
+services:
+  - type: worker
+    name: telegram-story-bot
+    runtime: python
+    repo: https://github.com/ваш_username/telegram-story-bot
+    buildCommand: pip install -r requirements.txt
+    startCommand: python bot.py
+    envVars:
+      - key: BOT_TOKEN
+        sync: false
+    # Явно указываем версию Python
+    plan: free
+    env:
+      - key: PYTHON_VERSION
+        value: 3.10.13
