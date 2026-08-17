@@ -2,12 +2,14 @@ import os
 import logging
 from PIL import Image, ImageDraw, ImageFont
 from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, InputFile
+from aiogram.types import InputFile
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 import textwrap
 
 # ========== КОНФИГ ==========
-API_TOKEN = "ТВОЙ_ТОКЕН_СЮДА"  # ВСТАВЬ СВОЙ ТОКЕН
+# ВСТАВЬ СВОЙ ТОКЕН СЮДА (получи у @BotFather)
+API_TOKEN = "ВАШ_ТОКЕН_СЮДА"
+
 FONT_PATH_BOLD = "arialbd.ttf"
 FONT_PATH_REG = "arial.ttf"
 
@@ -57,18 +59,18 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
 
     draw = ImageDraw.Draw(canvas)
 
-    # Шрифты (если файлов нет — используем дефолтный)
+    # Шрифты
     try:
         font_bold = ImageFont.truetype(FONT_PATH_BOLD, 72)
     except:
         font_bold = ImageFont.load_default()
-        logging.warning("Шрифт arialbd.ttf не найден, использую дефолтный")
+        logging.warning("Шрифт arialbd.ttf не найден")
 
     try:
         font_reg = ImageFont.truetype(FONT_PATH_REG, 48)
     except:
         font_reg = ImageFont.load_default()
-        logging.warning("Шрифт arial.ttf не найден, использую дефолтный")
+        logging.warning("Шрифт arial.ttf не найден")
 
     # Заголовок
     title_lines = textwrap.wrap(title, width=25)
@@ -80,7 +82,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     title_y = 870 - (title_h // 2)
     draw.text((title_x, title_y), title_text, font=font_bold, fill='white')
 
-    # Основной текст с авторазмером
+    # Основной текст
     MAX_TEXT_H = H - HALF_H - 80
     MAX_TEXT_W = W - 60
 
@@ -153,7 +155,6 @@ async def handle_text(message: types.Message):
         await start(message)
         return
 
-    # Игнорируем команды
     if message.text.startswith('/'):
         return
 
@@ -181,7 +182,6 @@ async def handle_text(message: types.Message):
                 photo=InputFile(output),
                 caption="✅ Готово! Твоя сторис 50/50."
             )
-            # Чистим временные файлы
             if os.path.exists(photo_path):
                 os.remove(photo_path)
             if os.path.exists(output):
