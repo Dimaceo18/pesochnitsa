@@ -52,13 +52,18 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
 
     canvas.paste(photo, (0, 0))
 
-    # Градиент
-    gradient = Image.new('RGBA', (W, 192), (0, 0, 0, 0))
+    # ========== ГРАДИЕНТ (40% от высоты фото) ==========
+    GRADIENT_HEIGHT = int(HALF_H * 0.4)
+    GRADIENT_START_Y = HALF_H - GRADIENT_HEIGHT
+    
+    gradient = Image.new('RGBA', (W, GRADIENT_HEIGHT), (0, 0, 0, 0))
     draw_grad = ImageDraw.Draw(gradient)
-    for i in range(192):
-        alpha = int(255 * (i / 192) * 0.8)
+    
+    for i in range(GRADIENT_HEIGHT):
+        alpha = int(255 * (i / GRADIENT_HEIGHT) * 0.8)
         draw_grad.rectangle([(0, i), (W, i + 1)], fill=(0, 0, 0, alpha))
-    canvas.paste(gradient, (0, 768), gradient)
+    
+    canvas.paste(gradient, (0, GRADIENT_START_Y), gradient)
 
     draw = ImageDraw.Draw(canvas)
 
@@ -111,44 +116,44 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     title_x = (W - title_w) // 2
     title_y = 870 - (title_h // 2)
     
-    # ===== ПОДЛОЖКА С РАМКОЙ =====
-    padding = 25  # Отступ текста от краев подложки
+    # Подложка с рамкой
+    padding = 25
     rect_x1 = title_x - padding
     rect_y1 = title_y - padding
     rect_x2 = title_x + title_w + padding
     rect_y2 = title_y + title_h + padding
     
-    radius = 15  # Радиус закругления
+    radius = 15
     
-    # 1. Рисуем подложку (полупрозрачный черный, чтобы текст читался на любом фоне)
+    # Полупрозрачная черная подложка
     draw.rounded_rectangle(
         [rect_x1, rect_y1, rect_x2, rect_y2],
         radius=radius,
-        fill=(0, 0, 0, 200),  # Черный с прозрачностью ~78%
+        fill=(0, 0, 0, 200),
         outline=None
     )
     
-    # 2. Рисуем белую рамку поверх подложки (чтобы было видно на черном фоне)
+    # Белая рамка
     draw.rounded_rectangle(
         [rect_x1, rect_y1, rect_x2, rect_y2],
         radius=radius,
         fill=None,
-        outline=(255, 255, 255),  # Белая рамка
-        width=3  # Толщина рамки 3px
+        outline=(255, 255, 255),
+        width=3
     )
     
-    # 3. Рисуем дополнительную декоративную рамку (тонкую внутреннюю)
+    # Внутренняя тонкая рамка
     inner_padding = 5
     draw.rounded_rectangle(
         [rect_x1 + inner_padding, rect_y1 + inner_padding, 
          rect_x2 - inner_padding, rect_y2 - inner_padding],
         radius=radius - 2,
         fill=None,
-        outline=(255, 255, 255, 100),  # Белая с прозрачностью
+        outline=(255, 255, 255, 100),
         width=1
     )
     
-    # 4. Рисуем сам заголовок
+    # Текст заголовка
     draw.text((title_x, title_y), title_text, font=font_bold, fill='white')
 
     # ========== ОСНОВНОЙ ТЕКСТ ==========
@@ -263,6 +268,19 @@ async def handle_text(message: types.Message):
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
-    print("🚀 Бот запущен...")
+    import asyncio
     from aiogram import executor
+    
+    print("🚀 Бот запускается...")
+    
+    # КРИТИЧЕСКИ ВАЖНО: удаляем вебхук перед запуском polling
+    async def delete_webhook():
+        await bot.delete_webhook()
+        print("✅ Вебхук удален")
+    
+    # Запускаем удаление вебхука
+    loop = asyncio.get_event_loop()
+    loop.run_until_complete(delete_webhook())
+    
+    # Запускаем polling
     executor.start_polling(dp, skip_updates=True)
