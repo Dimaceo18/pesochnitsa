@@ -7,15 +7,14 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 import textwrap
 
 # ========== КОНФИГ ==========
-# Берем токен из переменных окружения Render
 API_TOKEN = os.getenv("BOT_TOKEN")
 
 if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
 # Шрифты Inter
-FONT_PATH_BOLD = "Inter-Bold.ttf"      # Жирный для заголовка
-FONT_PATH_REG = "Inter-Black.ttf"      # Черный для основного текста
+FONT_PATH_BOLD = "Inter-Bold.ttf"
+FONT_PATH_REG = "Inter-Black.ttf"
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -76,12 +75,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         font_reg = ImageFont.load_default()
         logging.warning(f"Шрифт {FONT_PATH_REG} не найден, использую дефолтный")
 
-    # ========== ЗАГОЛОВОК (с отступами и подложкой) ==========
-    # Отступы по 5 пикселей слева и справа
+    # ========== ЗАГОЛОВОК С РАМКОЙ И ПОДЛОЖКОЙ ==========
     PADDING_X = 5
-    MAX_TITLE_WIDTH = W - (PADDING_X * 2)  # 1080 - 10 = 1070px
+    MAX_TITLE_WIDTH = W - (PADDING_X * 2)
     
-    # Разбиваем заголовок на строки с учетом ширины
     def wrap_title(text, font, max_width):
         words = text.split()
         lines = []
@@ -107,33 +104,51 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     title_lines = wrap_title(title, font_bold, MAX_TITLE_WIDTH)
     title_text = "\n".join(title_lines)
     
-    # Вычисляем размеры заголовка
     title_bbox = draw.textbbox((0, 0), title_text, font=font_bold)
     title_w = title_bbox[2] - title_bbox[0]
     title_h = title_bbox[3] - title_bbox[1]
     
-    # Позиция заголовка (по центру)
     title_x = (W - title_w) // 2
     title_y = 870 - (title_h // 2)
     
-    # ===== ПОДЛОЖКА ДЛЯ ЗАГОЛОВКА (чтобы выделить) =====
-    # Полупрозрачный черный прямоугольник с закруглениями
-    padding = 20  # Отступ текста от краев подложки
+    # ===== ПОДЛОЖКА С РАМКОЙ =====
+    padding = 25  # Отступ текста от краев подложки
     rect_x1 = title_x - padding
     rect_y1 = title_y - padding
     rect_x2 = title_x + title_w + padding
     rect_y2 = title_y + title_h + padding
     
-    # Рисуем подложку с закругленными углами
     radius = 15  # Радиус закругления
+    
+    # 1. Рисуем подложку (полупрозрачный черный, чтобы текст читался на любом фоне)
     draw.rounded_rectangle(
         [rect_x1, rect_y1, rect_x2, rect_y2],
         radius=radius,
-        fill=(0, 0, 0, 180),  # Черный с прозрачностью 70%
+        fill=(0, 0, 0, 200),  # Черный с прозрачностью ~78%
         outline=None
     )
     
-    # Рисуем сам заголовок поверх подложки
+    # 2. Рисуем белую рамку поверх подложки (чтобы было видно на черном фоне)
+    draw.rounded_rectangle(
+        [rect_x1, rect_y1, rect_x2, rect_y2],
+        radius=radius,
+        fill=None,
+        outline=(255, 255, 255),  # Белая рамка
+        width=3  # Толщина рамки 3px
+    )
+    
+    # 3. Рисуем дополнительную декоративную рамку (тонкую внутреннюю)
+    inner_padding = 5
+    draw.rounded_rectangle(
+        [rect_x1 + inner_padding, rect_y1 + inner_padding, 
+         rect_x2 - inner_padding, rect_y2 - inner_padding],
+        radius=radius - 2,
+        fill=None,
+        outline=(255, 255, 255, 100),  # Белая с прозрачностью
+        width=1
+    )
+    
+    # 4. Рисуем сам заголовок
     draw.text((title_x, title_y), title_text, font=font_bold, fill='white')
 
     # ========== ОСНОВНОЙ ТЕКСТ ==========
@@ -248,6 +263,6 @@ async def handle_text(message: types.Message):
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
-    print("🚀 Бот запущен с шрифтами Inter...")
+    print("🚀 Бот запущен...")
     from aiogram import executor
     executor.start_polling(dp, skip_updates=True)
