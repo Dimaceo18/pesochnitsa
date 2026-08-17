@@ -43,24 +43,6 @@ BACKGROUND_COLOR = (0, 0, 0)
 MARGIN = 60
 IMAGE_HEIGHT_RATIO = 0.55
 
-def download_image(url, filename):
-    """Скачивает изображение по URL"""
-    try:
-        if url.startswith('file://'):
-            import shutil
-            file_path = url[7:]
-            shutil.copy(file_path, filename)
-            return True
-        
-        response = requests.get(url, timeout=30)
-        if response.status_code == 200:
-            with open(filename, 'wb') as f:
-                f.write(response.content)
-            return True
-    except Exception as e:
-        logger.error(f"Ошибка загрузки изображения: {e}")
-    return False
-
 def wrap_text(text, font, max_width, draw):
     """Разбивает текст на строки"""
     if not text:
