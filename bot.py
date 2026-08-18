@@ -28,31 +28,44 @@ dp.middleware.setup(LoggingMiddleware())
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
     """
-    Разделяет текст на заголовок (первые 2-3 предложения) и основной текст.
+    Разделяет текст на заголовок (первый абзац) и основной текст (всё остальное).
+    Заголовок - текст до первой пустой строки или до первого перевода строки.
     """
     if not text:
         return "", ""
     
-    # Убираем лишние пробелы и разбиваем на предложения
-    sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-    sentences = [s.strip() for s in sentences if s.strip()]
+    # Убираем лишние пробелы в начале и конце
+    text = text.strip()
     
-    if len(sentences) <= 2:
-        return text, ""
+    # Разбиваем на абзацы (по двойному переводу строки)
+    paragraphs = re.split(r'\n\s*\n', text)
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
     
-    # Заголовок - первые 2-3 предложения
-    title_sentences = sentences[:3]
-    title = ". ".join(title_sentences)
+    if not paragraphs:
+        return "", ""
     
-    # Основной текст - всё остальное
-    content_sentences = sentences[3:]
-    content = ". ".join(content_sentences)
+    # Первый абзац - заголовок
+    title = paragraphs[0]
     
+    # Все остальные абзацы - основной текст
+    content = "\n\n".join(paragraphs[1:]) if len(paragraphs) > 1 else ""
+    
+    # Если заголовок слишком длинный (> 200 символов), обрезаем до первого предложения
     if len(title) > 200:
-        title_sentences = sentences[:2]
-        title = ". ".join(title_sentences)
-        content_sentences = sentences[2:]
-        content = ". ".join(content_sentences)
+        # Ищем первую точку с пробелом, вопросительный или восклицательный знак
+        match = re.search(r'[.!?]\s+', title)
+        if match:
+            title = title[:match.end()].strip()
+            # Остаток от заголовка добавляем к основному тексту
+            remaining = title[match.end():].strip()
+            if remaining:
+                content = remaining + "\n\n" + content if content else remaining
+    
+    # Если заголовок пустой, берем первые 2 предложения
+    if not title:
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        title = ". ".join(sentences[:2])
+        content = ". ".join(sentences[2:])
     
     return title, content
 
@@ -65,12 +78,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw = ImageDraw.Draw(canvas)
     
     # 2. ФОТО (квадрат с черной обводкой)
-    # Размер фото - 80% от ширины, чтобы были отступы
-    PHOTO_SIZE = int(W * 0.8)  # 864px
+    PHOTO_SIZE = int(W * 0.8)
     PHOTO_X = (W - PHOTO_SIZE) // 2
-    PHOTO_Y = 60  # Отступ сверху
+    PHOTO_Y = 60
     
-    # Обрезаем фото под квадрат (центрируем)
     photo = Image.open(photo_path).convert("RGB")
     min_side = min(photo.width, photo.height)
     left = (photo.width - min_side) // 2
@@ -78,29 +89,23 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     photo = photo.crop((left, top, left + min_side, top + min_side))
     photo = photo.resize((PHOTO_SIZE, PHOTO_SIZE), Image.Resampling.LANCZOS)
     
-    # Рисуем черную обводку (8px)
-    # Сначала создаем фон для обводки
     border_size = 8
     bordered_photo = Image.new('RGB', (PHOTO_SIZE + border_size * 2, PHOTO_SIZE + border_size * 2), color='black')
     bordered_photo.paste(photo, (border_size, border_size))
     
-    # Вставляем фото с обводкой на холст
     canvas.paste(bordered_photo, (PHOTO_X - border_size, PHOTO_Y - border_size))
     
     # 3. ЗАГОЛОВОК (большими буквами, максимум 3 строки)
     if title:
-        # Подбираем размер шрифта, чтобы заголовок был на 2-3 строки
-        MAX_TITLE_WIDTH = W - 80  # Отступы по 40px
+        MAX_TITLE_WIDTH = W - 80
         
         def fit_title(text, max_width):
-            # Пробуем размер от 80 и уменьшаем
             for size in range(80, 30, -2):
                 try:
                     font = ImageFont.truetype(FONT_PATH_BOLD, size)
                 except:
                     font = ImageFont.load_default()
                 
-                # Разбиваем на строки по словам
                 words = text.split()
                 lines = []
                 current_line = []
@@ -120,17 +125,13 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 if current_line:
                     lines.append(' '.join(current_line))
                 
-                # Если получилось 2-3 строки - подходит
                 if 2 <= len(lines) <= 3:
                     return font, lines
-                # Если больше 3 строк - уменьшаем шрифт дальше
                 if len(lines) > 3:
                     continue
-                # Если меньше 2 строк - тоже подходит (мало текста)
                 if len(lines) <= 2:
                     return font, lines
             
-            # Если ничего не подошло, берем минимальный размер
             try:
                 font = ImageFont.truetype(FONT_PATH_BOLD, 36)
             except:
@@ -154,22 +155,19 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_font, title_lines = fit_title(title, MAX_TITLE_WIDTH)
         title_text = "\n".join([line.upper() for line in title_lines])
         
-        # Позиция заголовка - сразу под фото
         title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
         title_w = title_bbox[2] - title_bbox[0]
         title_h = title_bbox[3] - title_bbox[1]
         
         title_x = (W - title_w) // 2
-        title_y = PHOTO_Y + PHOTO_SIZE + border_size * 2 + 30  # 30px отступ от фото
+        title_y = PHOTO_Y + PHOTO_SIZE + border_size * 2 + 30
         
-        # Рисуем заголовок (черный)
         draw.text((title_x, title_y), title_text, font=title_font, fill='black')
         
         # 4. ОСНОВНОЙ ТЕКСТ
         if content:
-            # Ограничиваем текст по высоте
             TEXT_START_Y = title_y + title_h + 20
-            MAX_TEXT_H = H - TEXT_START_Y - 100  # 100px для нижнего блока
+            MAX_TEXT_H = H - TEXT_START_Y - 100
             MAX_TEXT_W = W - 80
             
             def fit_content(text, max_w, max_h):
@@ -212,15 +210,12 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # 5. ЖЕЛТЫЙ ПРЯМОУГОЛЬНИК ВНИЗУ
     YELLOW_BLOCK_H = 60
     YELLOW_BLOCK_Y = H - YELLOW_BLOCK_H
-    YELLOW_BLOCK_X = 0
     
-    # Желтый прямоугольник на всю ширину
     draw.rectangle(
-        [YELLOW_BLOCK_X, YELLOW_BLOCK_Y, W, H],
+        [0, YELLOW_BLOCK_Y, W, H],
         fill='#FFD700'
     )
     
-    # Текст внутри желтого блока
     try:
         footer_font = ImageFont.truetype(FONT_PATH_BOLD, 28)
     except:
@@ -236,14 +231,12 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='black')
     
-    # Сохраняем результат
     output_path = "output_story.png"
     canvas.save(output_path, "PNG")
     return output_path
 
 # ========== ОБЩАЯ ФУНКЦИЯ ДЛЯ ОБРАБОТКИ ==========
 async def process_story(user_id: int, photo_path: str, title: str, content: str, message: types.Message):
-    """Общая функция для создания сторис из фото, заголовка и текста"""
     try:
         output = await generate_story(photo_path, title, content)
         await bot.send_photo(
@@ -269,7 +262,7 @@ async def start(message: types.Message):
         "📱 Привет! Я делаю сторис в белом стиле!\n\n"
         "Просто отправь мне РЕПОСТ любого поста из Telegram, и я:\n"
         "1️⃣ Возьму фото и сделаю его квадратом с черной обводкой\n"
-        "2️⃣ Сделаю заголовок большими буквами (2-3 строки)\n"
+        "2️⃣ Первый абзац сделаю заголовком большими буквами\n"
         "3️⃣ Остальной текст размещу ниже\n"
         "4️⃣ Добавлю желтый блок внизу\n\n"
         "Или отправь данные вручную:\n"
@@ -307,11 +300,21 @@ async def handle_forward(message: types.Message):
         await message.answer("❌ В репосте нет фото! Пожалуйста, отправь репост с изображением.")
         return
     
+    # Удаляем мусорные строки
     text = text.replace("**Текст отсутствует**", "").strip()
+    # Удаляем строки с "Подписаться" и подобные
+    lines = text.split('\n')
+    clean_lines = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
+            clean_lines.append(line)
+    text = '\n'.join(clean_lines)
     
     title, content = parse_text(text)
     
     if not title and text:
+        # Если не удалось определить абзацы, берем первые 2 предложения
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         title = ". ".join(sentences[:2])
         content = ". ".join(sentences[2:])
@@ -320,6 +323,14 @@ async def handle_forward(message: types.Message):
         title = "📌 Заголовок"
     if not content:
         content = "Текст отсутствует"
+    
+    # Ограничиваем заголовок до 150 символов
+    if len(title) > 150:
+        # Обрезаем по последней точке
+        last_dot = title.rfind('.', 0, 150)
+        if last_dot > 0:
+            content = title[last_dot+1:].strip() + "\n\n" + content if content else title[last_dot+1:].strip()
+            title = title[:last_dot+1].strip()
     
     await message.answer(f"📝 Заголовок: {title[:50]}...\n\n⏳ Генерирую сторис...")
     
