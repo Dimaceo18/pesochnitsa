@@ -28,16 +28,11 @@ dp.middleware.setup(LoggingMiddleware())
 
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
-    """
-    Заголовок = первый абзац (до первой пустой строки ИЛИ до первого перевода строки)
-    Основной текст = всё остальное
-    """
     if not text:
         return "", ""
     
     text = text.strip()
     
-    # Сначала пробуем разделить по двойному переводу строки (пустые строки)
     paragraphs = re.split(r'\n\s*\n', text)
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
     
@@ -45,7 +40,6 @@ def parse_text(text: str) -> tuple:
         title = paragraphs[0]
         content = "\n\n".join(paragraphs[1:])
     else:
-        # Если нет пустых строк, пробуем разделить по переводу строки
         lines = text.split('\n')
         lines = [l.strip() for l in lines if l.strip()]
         
@@ -53,7 +47,6 @@ def parse_text(text: str) -> tuple:
             title = lines[0]
             content = '\n'.join(lines[1:])
         else:
-            # Если всего одна строка, пробуем разделить по точке с заглавной
             match = re.search(r'\.\s+([А-ЯA-Z])', text)
             if match:
                 cut_pos = match.start() + 1
@@ -69,7 +62,6 @@ def parse_text(text: str) -> tuple:
                     title = text
                     content = ""
     
-    # Если заголовок слишком длинный (> 150 символов) - обрезаем
     if len(title) > 150:
         last_dot = title.rfind('.', 0, 150)
         last_q = title.rfind('?', 0, 150)
@@ -92,17 +84,12 @@ def parse_text(text: str) -> tuple:
 
 # ========== ФОРМАТИРОВАНИЕ ТЕКСТА В АБЗАЦЫ ==========
 def format_paragraphs(text: str) -> list:
-    """
-    Разбивает текст на абзацы по точкам с заглавной буквой
-    """
     if not text:
         return []
     
-    # Разбиваем по точкам с пробелом и заглавной буквой
     sentences = re.split(r'(?<=[.!?])\s+(?=[А-ЯA-Z])', text)
     sentences = [s.strip() for s in sentences if s.strip()]
     
-    # Группируем по 2-3 предложения в абзац
     paragraphs = []
     current_para = []
     
@@ -117,30 +104,22 @@ def format_paragraphs(text: str) -> list:
     
     return paragraphs
 
-# ========== РЕТРО-ЭФФЕКТ ДЛЯ ФОТО (УСИЛЕННЫЙ) ==========
+# ========== РЕТРО-ЭФФЕКТ ==========
 def apply_retro_effect(image: Image.Image) -> Image.Image:
-    """
-    Применяет усиленный ретро-эффект к изображению: шум, зерно, винтажный оттенок
-    +20% к интенсивности
-    """
     if image.mode != 'RGB':
         image = image.convert('RGB')
     
-    # 1. Уменьшаем контрастность
     enhancer = ImageEnhance.Contrast(image)
     image = enhancer.enhance(0.75)
     
-    # 2. Добавляем теплый оттенок (сепия)
     width, height = image.size
     sepia_overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     sepia_draw = ImageDraw.Draw(sepia_overlay)
-    
     sepia_draw.rectangle([(0, 0), (width, height)], fill=(180, 130, 80, 40))
     image = image.convert('RGBA')
     image = Image.alpha_composite(image, sepia_overlay)
     image = image.convert('RGB')
     
-    # 3. Добавляем шум (зернистость)
     pixel_data = list(image.getdata())
     width, height = image.size
     
@@ -152,20 +131,15 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
         noise_r = random.randint(-noise_intensity, noise_intensity)
         noise_g = random.randint(-noise_intensity, noise_intensity)
         noise_b = random.randint(-noise_intensity, noise_intensity)
-        
         r = max(0, min(255, r + noise_r))
         g = max(0, min(255, g + noise_g))
         b = max(0, min(255, b + noise_b))
-        
         noisy_pixels.append((r, g, b))
     
     noisy_image = Image.new('RGB', (width, height))
     noisy_image.putdata(noisy_pixels)
-    
-    # 4. Добавляем размытие
     noisy_image = noisy_image.filter(ImageFilter.GaussianBlur(radius=0.8))
     
-    # 5. Увеличиваем яркость
     enhancer = ImageEnhance.Brightness(noisy_image)
     noisy_image = enhancer.enhance(1.1)
     
@@ -173,7 +147,7 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
 
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
-    W, H = 1080, 1920  # 9:16
+    W, H = 1080, 1920
     
     logging.info(f"🖼 Генерация сторис:")
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
@@ -183,7 +157,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     canvas = Image.new('RGB', (W, H), color='black')
     draw = ImageDraw.Draw(canvas)
     
-    # 2. ФОТО НА ВСЮ ШИРИНУ С РЕТРО-ЭФФЕКТОМ
+    # 2. ФОТО
     PHOTO_WIDTH = W
     PHOTO_X = 0
     
@@ -218,10 +192,15 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         font_reg = ImageFont.load_default()
         logging.warning(f"Шрифт {FONT_PATH_REG} не найден")
     
-    # 4. ЗАГОЛОВОК
+    # 4. КОНСТАНТЫ ОТСТУПОВ
     SIDE_MARGIN = 40
     TITLE_LINE_SPACING = 6
-    title_y_position = PHOTO_HEIGHT + border_size + 30
+    GAP_BETWEEN_PHOTO_AND_TITLE = 30
+    GAP_BETWEEN_TITLE_AND_LINE = 25  # От заголовка до линии
+    GAP_BETWEEN_LINE_AND_TEXT = 25   # От линии до текста
+    
+    # 5. ЗАГОЛОВОК
+    title_y_position = PHOTO_HEIGHT + border_size + GAP_BETWEEN_PHOTO_AND_TITLE
     
     if title:
         MAX_TITLE_WIDTH = W - (SIDE_MARGIN * 2)
@@ -287,33 +266,27 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='white')
         
-        # Вычисляем высоту заголовка
+        # Вычисляем точную позицию конца заголовка
         single_bbox = draw.textbbox((0, 0), "A", font=title_font)
         single_h = single_bbox[3] - single_bbox[1]
         title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
-        
-        # СОХРАНЯЕМ ПОЗИЦИЮ КОНЦА ЗАГОЛОВКА
         title_end_y = title_y + title_total_h
         
-        # ===== РАЗДЕЛИТЕЛЬ =====
-        # Отступ после заголовка (большой, чтобы не налезало)
-        SEPARATOR_OFFSET = 30  # Отступ от заголовка до линии
+        # ===== РАЗДЕЛИТЕЛЬ (строго посередине) =====
+        # Линия рисуется через 25px после заголовка
+        line_y = title_end_y + GAP_BETWEEN_TITLE_AND_LINE
         
-        # Позиция линии разделителя
-        LINE_Y = title_end_y + SEPARATOR_OFFSET
         LINE_WIDTH = W - (SIDE_MARGIN * 2)
         LINE_X1 = SIDE_MARGIN
         LINE_X2 = SIDE_MARGIN + LINE_WIDTH
         LINE_HEIGHT = 2
         
-        # Рисуем тонкую белую линию
-        draw.rectangle([LINE_X1, LINE_Y, LINE_X2, LINE_Y + LINE_HEIGHT], fill='white')
+        draw.rectangle([LINE_X1, line_y, LINE_X2, line_y + LINE_HEIGHT], fill='white')
         
-        # Отступ после разделителя (перед текстом)
-        TEXT_OFFSET = 30
-        title_y_position = LINE_Y + LINE_HEIGHT + TEXT_OFFSET
+        # Позиция для текста (через 25px после линии)
+        title_y_position = line_y + LINE_HEIGHT + GAP_BETWEEN_LINE_AND_TEXT
     
-    # 5. ОСНОВНОЙ ТЕКСТ
+    # 6. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
@@ -385,7 +358,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     else:
         logging.warning(f"⚠️ Основной текст ПУСТОЙ или равен 'Текст отсутствует'")
     
-    # 6. ТЕМНО-СЕРЫЙ БЛОК ВНИЗУ
+    # 7. ТЕМНО-СЕРЫЙ БЛОК ВНИЗУ
     GRAY_BLOCK_H = 60
     GRAY_BLOCK_Y = H - GRAY_BLOCK_H
     
@@ -484,7 +457,6 @@ async def handle_forward(message: types.Message):
         await message.answer("❌ В репосте нет фото!")
         return
     
-    # Очищаем текст от мусора
     text = text.replace("**Текст отсутствует**", "").strip()
     lines = text.split('\n')
     clean_lines = []
