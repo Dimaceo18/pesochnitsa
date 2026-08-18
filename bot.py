@@ -27,7 +27,7 @@ W, H = 1080, 1920
 # Отступы
 SIDE_MARGIN = 40
 GAP_BETWEEN_TITLE_AND_TEXT = 25  # Расстояние между заголовком и текстом
-MAX_PHOTO_HEIGHT = 700  # МАКСИМАЛЬНАЯ ВЫСОТА ФОТО (чтобы осталось место для текста)
+MAX_PHOTO_HEIGHT = 580  # МАКСИМАЛЬНАЯ ВЫСОТА ФОТО
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -179,10 +179,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     photo_ratio = photo.width / photo.height
     PHOTO_HEIGHT = int(W / photo_ratio)
     
-    # ОГРАНИЧИВАЕМ ВЫСОТУ ФОТО, чтобы осталось место для текста
+    # ОГРАНИЧИВАЕМ ВЫСОТУ ФОТО
     if PHOTO_HEIGHT > MAX_PHOTO_HEIGHT:
         PHOTO_HEIGHT = MAX_PHOTO_HEIGHT
-        # Обрезаем фото по центру по высоте
         crop_height = int(photo.width / (W / PHOTO_HEIGHT))
         if crop_height < photo.height:
             top = (photo.height - crop_height) // 2
@@ -214,7 +213,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # ============================================================
     # ШАГ 4: РИСУЕМ ЗАГОЛОВОК
     # ============================================================
-    current_y = PHOTO_HEIGHT + border_size + 25
+    current_y = PHOTO_HEIGHT + border_size + 20
     
     if title:
         MAX_TITLE_WIDTH = W - (SIDE_MARGIN * 2)
