@@ -25,7 +25,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-# ========== ПАРСИНГ ТЕКСТА (УЛУЧШЕННЫЙ) ==========
+# ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
     """
     Заголовок = первый абзац (до первой пустой строки ИЛИ до первого перевода строки)
@@ -40,7 +40,6 @@ def parse_text(text: str) -> tuple:
     paragraphs = re.split(r'\n\s*\n', text)
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
     
-    # Если есть несколько абзацев с пустыми строками
     if len(paragraphs) > 1:
         title = paragraphs[0]
         content = "\n\n".join(paragraphs[1:])
@@ -50,32 +49,27 @@ def parse_text(text: str) -> tuple:
         lines = [l.strip() for l in lines if l.strip()]
         
         if len(lines) > 1:
-            # Первая строка - заголовок
             title = lines[0]
             content = '\n'.join(lines[1:])
         else:
             # Если всего одна строка, пробуем разделить по точке с заглавной
-            # Ищем паттерн: точка, пробел, заглавная буква
             match = re.search(r'\.\s+([А-ЯA-Z])', text)
             if match:
-                cut_pos = match.start() + 1  # Позиция после точки
+                cut_pos = match.start() + 1
                 title = text[:cut_pos].strip()
                 content = text[cut_pos:].strip()
             else:
-                # Ищем по вопросительному или восклицательному знаку
                 match = re.search(r'[?!]\s+([А-ЯA-Z])', text)
                 if match:
                     cut_pos = match.start() + 1
                     title = text[:cut_pos].strip()
                     content = text[cut_pos:].strip()
                 else:
-                    # Если ничего не нашли - всё в заголовок
                     title = text
                     content = ""
     
     # Если заголовок слишком длинный (> 150 символов) - обрезаем
     if len(title) > 150:
-        # Ищем последнюю точку в пределах 150 символов
         last_dot = title.rfind('.', 0, 150)
         last_q = title.rfind('?', 0, 150)
         last_excl = title.rfind('!', 0, 150)
@@ -87,7 +81,6 @@ def parse_text(text: str) -> tuple:
             if remaining:
                 content = remaining + "\n\n" + content if content else remaining
         else:
-            # Если нет разделителя, обрезаем и добавляем многоточие
             title = title[:147] + "..."
     
     logging.info(f"📝 Парсинг текста:")
@@ -144,7 +137,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     # 4. ЗАГОЛОВОК
     SIDE_MARGIN = 40
-    LINE_SPACING = 8
+    TITLE_LINE_SPACING = 6  # Межстрочное расстояние для заголовка
     title_y_position = PHOTO_HEIGHT + border_size + 25
     
     if title:
@@ -217,8 +210,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         single_bbox = draw.textbbox((0, 0), "A", font=title_font)
         single_h = single_bbox[3] - single_bbox[1]
         
-        title_total_h = len(title_lines) * single_h + LINE_SPACING * (len(title_lines) - 1)
-        title_y_position = title_y + title_total_h + 35
+        title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
+        title_y_position = title_y + title_total_h + 22  # Отступ после заголовка
     
     # 5. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
@@ -227,7 +220,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         MAX_TEXT_W = W - (SIDE_MARGIN * 2)
         MAX_TEXT_H = H - title_y_position - 100
         
-        CONTENT_LINE_SPACING = 6
+        CONTENT_LINE_SPACING = 5  # Межстрочное расстояние для текста
         
         def fit_content(text, max_w, max_h):
             for size in range(40, 22, -2):
@@ -252,7 +245,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                     
                     para_height = len(wrapped) * single_h + CONTENT_LINE_SPACING * (len(wrapped) - 1)
                     total_height += para_height
-                    total_height += 15
+                    total_height += 12  # Отступ между абзацами
                 
                 if total_height <= max_h:
                     return font, wrapped_paragraphs, single_h
@@ -286,7 +279,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 draw.text((line_x, current_y), line, font=content_font, fill='white')
                 current_y += single_h + CONTENT_LINE_SPACING
             
-            current_y += 15
+            current_y += 12  # Отступ между абзацами
         
         logging.info(f"✅ Основной текст нарисован")
     else:
