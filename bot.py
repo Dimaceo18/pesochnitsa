@@ -117,42 +117,41 @@ def format_paragraphs(text: str) -> list:
     
     return paragraphs
 
-# ========== РЕТРО-ЭФФЕКТ ДЛЯ ФОТО ==========
+# ========== РЕТРО-ЭФФЕКТ ДЛЯ ФОТО (УСИЛЕННЫЙ) ==========
 def apply_retro_effect(image: Image.Image) -> Image.Image:
     """
-    Применяет ретро-эффект к изображению: шум, зерно, винтажный оттенок
+    Применяет усиленный ретро-эффект к изображению: шум, зерно, винтажный оттенок
+    +20% к интенсивности
     """
     # Конвертируем в RGB если нужно
     if image.mode != 'RGB':
         image = image.convert('RGB')
     
-    # 1. Немного уменьшаем контрастность для винтажного вида
+    # 1. Уменьшаем контрастность для винтажного вида (сильнее)
     enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(0.85)
+    image = enhancer.enhance(0.75)  # Было 0.85, теперь 0.75
     
-    # 2. Добавляем легкий теплый оттенок (сепия)
-    # Создаем градиентную маску для теплого оттенка
+    # 2. Добавляем теплый оттенок (сепия) - сильнее
     width, height = image.size
     sepia_overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     sepia_draw = ImageDraw.Draw(sepia_overlay)
     
-    # Накладываем легкий коричневато-оранжевый оттенок
-    sepia_draw.rectangle([(0, 0), (width, height)], fill=(180, 130, 80, 25))
+    # Накладываем более насыщенный коричневато-оранжевый оттенок
+    sepia_draw.rectangle([(0, 0), (width, height)], fill=(180, 130, 80, 40))  # Было 25, стало 40
     image = image.convert('RGBA')
     image = Image.alpha_composite(image, sepia_overlay)
     image = image.convert('RGB')
     
-    # 3. Добавляем шум (зернистость)
+    # 3. Добавляем шум (зернистость) - сильнее
     pixel_data = list(image.getdata())
     width, height = image.size
     
-    # Создаем шум с низкой интенсивностью
-    noise_intensity = 15  # Умеренный шум
+    # Увеличиваем интенсивность шума
+    noise_intensity = 22  # Было 15, стало 22
     noisy_pixels = []
     
     for pixel in pixel_data:
         r, g, b = pixel
-        # Добавляем случайный шум к каждому каналу
         noise_r = random.randint(-noise_intensity, noise_intensity)
         noise_g = random.randint(-noise_intensity, noise_intensity)
         noise_b = random.randint(-noise_intensity, noise_intensity)
@@ -163,16 +162,15 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
         
         noisy_pixels.append((r, g, b))
     
-    # Создаем новое изображение с шумом
     noisy_image = Image.new('RGB', (width, height))
     noisy_image.putdata(noisy_pixels)
     
-    # 4. Добавляем легкое размытие для эффекта старой пленки
-    noisy_image = noisy_image.filter(ImageFilter.GaussianBlur(radius=0.5))
+    # 4. Добавляем размытие для эффекта старой пленки (чуть сильнее)
+    noisy_image = noisy_image.filter(ImageFilter.GaussianBlur(radius=0.8))  # Было 0.5, стало 0.8
     
     # 5. Немного увеличиваем яркость
     enhancer = ImageEnhance.Brightness(noisy_image)
-    noisy_image = enhancer.enhance(1.05)
+    noisy_image = enhancer.enhance(1.1)  # Было 1.05, стало 1.1
     
     return noisy_image
 
@@ -202,7 +200,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     photo = photo.resize((PHOTO_WIDTH, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
     
-    # ПРИМЕНЯЕМ РЕТРО-ЭФФЕКТ
+    # ПРИМЕНЯЕМ УСИЛЕННЫЙ РЕТРО-ЭФФЕКТ
     photo = apply_retro_effect(photo)
     
     border_size = 8
@@ -228,7 +226,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # 4. ЗАГОЛОВОК
     SIDE_MARGIN = 40
     TITLE_LINE_SPACING = 6
-    title_y_position = PHOTO_HEIGHT + border_size + 25
+    title_y_position = PHOTO_HEIGHT + border_size + 30
     
     if title:
         MAX_TITLE_WIDTH = W - (SIDE_MARGIN * 2)
@@ -299,21 +297,25 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         single_h = single_bbox[3] - single_bbox[1]
         title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
         
-        # Обновляем позицию после заголовка
-        title_y_position = title_y + title_total_h + 20
-        
-        # ===== РАЗДЕЛИТЕЛЬ =====
+        # Позиция после заголовка с отступом
+        title_y_position = title_y + title_total_h + 25
+    
+    # 5. РАЗДЕЛИТЕЛЬ (с отступами сверху и снизу)
+    if title:
+        # Отступ сверху от заголовка уже сделан (25px)
         LINE_Y = title_y_position
         LINE_WIDTH = W - (SIDE_MARGIN * 2)
         LINE_X1 = SIDE_MARGIN
         LINE_X2 = SIDE_MARGIN + LINE_WIDTH
         LINE_HEIGHT = 2
         
+        # Рисуем тонкую белую линию
         draw.rectangle([LINE_X1, LINE_Y, LINE_X2, LINE_Y + LINE_HEIGHT], fill='white')
         
-        title_y_position = LINE_Y + LINE_HEIGHT + 20
+        # Отступ после разделителя (25px)
+        title_y_position = LINE_Y + LINE_HEIGHT + 25
     
-    # 5. ОСНОВНОЙ ТЕКСТ
+    # 6. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
@@ -385,11 +387,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     else:
         logging.warning(f"⚠️ Основной текст ПУСТОЙ или равен 'Текст отсутствует'")
     
-    # 6. ЖЕЛТЫЙ БЛОК ВНИЗУ
-    YELLOW_BLOCK_H = 60
-    YELLOW_BLOCK_Y = H - YELLOW_BLOCK_H
+    # 7. ТЕМНО-СЕРЫЙ БЛОК ВНИЗУ (вместо желтого)
+    GRAY_BLOCK_H = 60
+    GRAY_BLOCK_Y = H - GRAY_BLOCK_H
     
-    draw.rectangle([0, YELLOW_BLOCK_Y, W, H], fill='#FFD700')
+    draw.rectangle([0, GRAY_BLOCK_Y, W, H], fill='#2A2A2A')  # Темно-серый
     
     try:
         footer_font = ImageFont.truetype(FONT_PATH_BOLD, 28)
@@ -402,9 +404,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     footer_h = footer_bbox[3] - footer_bbox[1]
     
     footer_x = (W - footer_w) // 2
-    footer_y = YELLOW_BLOCK_Y + (YELLOW_BLOCK_H - footer_h) // 2
+    footer_y = GRAY_BLOCK_Y + (GRAY_BLOCK_H - footer_h) // 2
     
-    draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='black')
+    draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='white')  # Текст белый на сером
     
     output_path = "output_story.png"
     canvas.save(output_path, "PNG")
@@ -421,7 +423,7 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
         await bot.send_photo(
             chat_id=user_id,
             photo=InputFile(output),
-            caption="✅ Готово! 🎞️ Ретро-эффект применен"
+            caption="✅ Готово! 🎞️ Ретро-эффект усилен"
         )
         if os.path.exists(photo_path):
             os.remove(photo_path)
@@ -440,9 +442,9 @@ user_data = {}
 async def start(message: types.Message):
     await message.answer(
         "📱 Привет! Я делаю сторис в ретро-стиле!\n\n"
-        "🎞️ К каждому фото применяется винтажный эффект:\n"
-        "• Легкая зернистость\n"
-        "• Теплый оттенок\n"
+        "🎞️ К каждому фото применяется усиленный винтажный эффект:\n"
+        "• Сильная зернистость\n"
+        "• Теплый сепия-оттенок\n"
         "• Пленочный шум\n\n"
         "Просто отправь мне РЕПОСТ любого поста, и я:\n"
         "1️⃣ Обработаю фото в ретро-стиле\n"
@@ -463,7 +465,7 @@ async def handle_forward(message: types.Message):
     if not is_forward:
         return
     
-    await message.answer("📥 Обнаружен репост! Обрабатываю с ретро-эффектом...")
+    await message.answer("📥 Обнаружен репост! Обрабатываю с усиленным ретро-эффектом...")
     
     text = message.text or message.caption or ""
     logging.info(f"📥 Исходный текст репоста ({len(text)} симв): {text[:200]}...")
@@ -512,7 +514,7 @@ async def handle_forward(message: types.Message):
     logging.info(f"   Заголовок: {title[:100]}...")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
-    await message.answer(f"📝 Заголовок: {title[:50]}...\n\n🎞️ Применяю ретро-эффект...")
+    await message.answer(f"📝 Заголовок: {title[:50]}...\n\n🎞️ Применяю усиленный ретро-эффект...")
     
     await process_story(user_id, photo_file_path, title, content, message)
     
@@ -536,7 +538,7 @@ async def handle_photo(message: types.Message):
         file_path = f"temp_{user_id}.jpg"
         await bot.download_file(file.file_path, file_path)
         
-        await message.answer("🎞️ Обрабатываю с ретро-эффектом...")
+        await message.answer("🎞️ Обрабатываю с усиленным ретро-эффектом...")
         await process_story(user_id, file_path, title, content, message)
         return
     
@@ -592,7 +594,7 @@ if __name__ == "__main__":
     import asyncio
     from aiogram import executor
     
-    print("🚀 Бот запускается с ретро-эффектом...")
+    print("🚀 Бот запускается с усиленным ретро-эффектом...")
     
     async def delete_webhook():
         try:
