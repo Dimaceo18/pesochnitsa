@@ -18,6 +18,9 @@ if not API_TOKEN:
 FONT_PATH_BOLD = "Inter-Bold.ttf"
 FONT_PATH_REG = "Inter-Regular.ttf"
 
+# Фоновое изображение
+BACKGROUND_IMAGE = "fon.png"
+
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
 
@@ -153,11 +156,19 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
-    # 1. ЧЕРНЫЙ ФОН
-    canvas = Image.new('RGB', (W, H), color='black')
+    # 1. ФОНОВОЕ ИЗОБРАЖЕНИЕ (растягиваем на весь холст)
+    try:
+        background = Image.open(BACKGROUND_IMAGE).convert("RGB")
+        background = background.resize((W, H), Image.Resampling.LANCZOS)
+        canvas = background
+        logging.info(f"✅ Фоновое изображение загружено: {BACKGROUND_IMAGE}")
+    except Exception as e:
+        logging.warning(f"⚠️ Не удалось загрузить фон: {e}. Использую черный фон.")
+        canvas = Image.new('RGB', (W, H), color='black')
+    
     draw = ImageDraw.Draw(canvas)
     
-    # 2. ФОТО
+    # 2. ФОТО НА ВСЮ ШИРИНУ (с ретро-эффектом)
     PHOTO_WIDTH = W
     PHOTO_X = 0
     
@@ -192,12 +203,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         font_reg = ImageFont.load_default()
         logging.warning(f"Шрифт {FONT_PATH_REG} не найден")
     
-    # 4. КОНСТАНТЫ ОТСТУПОВ
+    # 4. КОНСТАНТЫ
     SIDE_MARGIN = 40
     TITLE_LINE_SPACING = 6
     GAP_BETWEEN_PHOTO_AND_TITLE = 30
-    GAP_BETWEEN_TITLE_AND_LINE = 25  # От заголовка до линии
-    GAP_BETWEEN_LINE_AND_TEXT = 25   # От линии до текста
+    TOTAL_GAP_BETWEEN_TITLE_AND_TEXT = 60
     
     # 5. ЗАГОЛОВОК
     title_y_position = PHOTO_HEIGHT + border_size + GAP_BETWEEN_PHOTO_AND_TITLE
@@ -266,15 +276,15 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='white')
         
-        # Вычисляем точную позицию конца заголовка
+        # Вычисляем конец заголовка
         single_bbox = draw.textbbox((0, 0), "A", font=title_font)
         single_h = single_bbox[3] - single_bbox[1]
         title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
         title_end_y = title_y + title_total_h
         
-        # ===== РАЗДЕЛИТЕЛЬ (строго посередине) =====
-        # Линия рисуется через 25px после заголовка
-        line_y = title_end_y + GAP_BETWEEN_TITLE_AND_LINE
+        # ===== РАЗДЕЛИТЕЛЬ (ровно по центру между заголовком и текстом) =====
+        text_start_y = title_end_y + TOTAL_GAP_BETWEEN_TITLE_AND_TEXT
+        line_y = title_end_y + (TOTAL_GAP_BETWEEN_TITLE_AND_TEXT // 2)
         
         LINE_WIDTH = W - (SIDE_MARGIN * 2)
         LINE_X1 = SIDE_MARGIN
@@ -283,8 +293,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.rectangle([LINE_X1, line_y, LINE_X2, line_y + LINE_HEIGHT], fill='white')
         
-        # Позиция для текста (через 25px после линии)
-        title_y_position = line_y + LINE_HEIGHT + GAP_BETWEEN_LINE_AND_TEXT
+        title_y_position = text_start_y
     
     # 6. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
