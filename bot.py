@@ -25,7 +25,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-# ========== ПАРСИНГ ТЕКСТА (ПРОСТОЙ) ==========
+# ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
     """
     Заголовок = первый абзац (до первой пустой строки)
@@ -49,17 +49,27 @@ def parse_text(text: str) -> tuple:
     # Все остальные абзацы - основной текст
     content = "\n\n".join(paragraphs[1:]) if len(paragraphs) > 1 else ""
     
+    # ЛОГИРУЕМ РЕЗУЛЬТАТ
+    logging.info(f"📝 Парсинг текста:")
+    logging.info(f"   Заголовок ({len(title)} симв): {title[:100]}...")
+    logging.info(f"   Контент ({len(content)} симв): {content[:100] if content else 'ПУСТО'}...")
+    
     return title, content
 
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
     W, H = 1080, 1920  # 9:16
     
+    # ЛОГИРУЕМ ВХОДНЫЕ ДАННЫЕ
+    logging.info(f"🖼 Генерация сторис:")
+    logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
+    logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
+    
     # 1. БЕЛЫЙ ФОН
     canvas = Image.new('RGB', (W, H), color='white')
     draw = ImageDraw.Draw(canvas)
     
-    # 2. ФОТО НА ВСЮ ШИРИНУ (с обводкой только снизу)
+    # 2. ФОТО НА ВСЮ ШИРИНУ
     PHOTO_WIDTH = W
     PHOTO_X = 0
     
@@ -67,14 +77,12 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     photo_ratio = photo.width / photo.height
     PHOTO_HEIGHT = int(PHOTO_WIDTH / photo_ratio)
     
-    # Ограничиваем высоту фото, чтобы осталось место для текста
     if PHOTO_HEIGHT > 960:
         PHOTO_HEIGHT = 960
         photo = photo.crop((0, 0, photo.width, int(photo.width / (PHOTO_WIDTH / PHOTO_HEIGHT))))
     
     photo = photo.resize((PHOTO_WIDTH, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
     
-    # Обводка только снизу (8px)
     border_size = 8
     bordered_photo = Image.new('RGB', (PHOTO_WIDTH, PHOTO_HEIGHT + border_size), color='black')
     bordered_photo.paste(photo, (0, 0))
@@ -169,7 +177,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_y_position = title_y + title_h + 20
     
     # 5. ОСНОВНОЙ ТЕКСТ
+    # ВСЕГДА рисуем текст, даже если он есть
     if content:
+        logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
+        
         MAX_TEXT_H = H - title_y_position - 100
         MAX_TEXT_W = W - 80
         
@@ -241,6 +252,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             
             if para_idx < len(wrapped_paragraphs) - 1:
                 current_y += 15
+        
+        logging.info(f"✅ Основной текст нарисован")
+    else:
+        logging.warning(f"⚠️ Основной текст ПУСТОЙ!")
     
     # 6. ЖЕЛТЫЙ БЛОК ВНИЗУ
     YELLOW_BLOCK_H = 60
@@ -270,6 +285,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
 # ========== ОБЩАЯ ФУНКЦИЯ ==========
 async def process_story(user_id: int, photo_path: str, title: str, content: str, message: types.Message):
     try:
+        logging.info(f"🔍 process_story вызван:")
+        logging.info(f"   title: {title[:50] if title else 'ПУСТО'}...")
+        logging.info(f"   content: {content[:50] if content else 'ПУСТО'}...")
+        
         output = await generate_story(photo_path, title, content)
         await bot.send_photo(
             chat_id=user_id,
@@ -282,6 +301,7 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
             os.remove(output)
         return True
     except Exception as e:
+        logging.error(f"❌ Ошибка: {str(e)}")
         await message.answer(f"❌ Ошибка: {str(e)}")
         return False
 
@@ -312,23 +332,28 @@ async def handle_forward(message: types.Message):
     
     await message.answer("📥 Обнаружен репост! Обрабатываю...")
     
+    # ПОЛУЧАЕМ ТЕКСТ
     text = message.text or message.caption or ""
+    logging.info(f"📥 Исходный текст репоста ({len(text)} симв): {text[:200]}...")
     
+    # Ищем фото
     photo_file_path = None
     
     if message.photo:
         file = await bot.get_file(message.photo[-1].file_id)
         photo_file_path = f"temp_{user_id}_forward.jpg"
         await bot.download_file(file.file_path, photo_file_path)
+        logging.info(f"📸 Фото найдено в message.photo")
     elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
         file = await bot.get_file(message.document.file_id)
         photo_file_path = f"temp_{user_id}_forward.jpg"
         await bot.download_file(file.file_path, photo_file_path)
+        logging.info(f"📸 Фото найдено в message.document")
     else:
         await message.answer("❌ В репосте нет фото!")
         return
     
-    # Очищаем мусор
+    # Очищаем текст от мусора
     text = text.replace("**Текст отсутствует**", "").strip()
     lines = text.split('\n')
     clean_lines = []
@@ -337,8 +362,9 @@ async def handle_forward(message: types.Message):
         if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
             clean_lines.append(line)
     text = '\n'.join(clean_lines)
+    logging.info(f"🧹 Очищенный текст ({len(text)} симв): {text[:200]}...")
     
-    # ПАРСИНГ: первый абзац = заголовок, остальное = текст
+    # ПАРСИНГ: первый абзац = заголовок
     title, content = parse_text(text)
     
     # Если заголовок пустой - берем первые 2 предложения
@@ -346,11 +372,16 @@ async def handle_forward(message: types.Message):
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         title = ". ".join(sentences[:2])
         content = ". ".join(sentences[2:])
+        logging.info(f"🔄 Заголовок из первых 2 предложений: {title[:50]}...")
     
     if not title:
         title = "📌 Заголовок"
     if not content:
         content = "Текст отсутствует"
+    
+    logging.info(f"📝 ИТОГО:")
+    logging.info(f"   Заголовок: {title[:100]}...")
+    logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
     await message.answer(f"📝 Заголовок: {title[:50]}...\n\n⏳ Генерирую...")
     
@@ -432,7 +463,7 @@ if __name__ == "__main__":
     import asyncio
     from aiogram import executor
     
-    print("🚀 Бот запускается...")
+    print("🚀 Бот запускается с логированием...")
     
     async def delete_webhook():
         await bot.delete_webhook()
