@@ -25,10 +25,10 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-# ========== ПАРСИНГ ТЕКСТА ==========
+# ========== ПАРСИНГ ТЕКСТА (УЛУЧШЕННЫЙ) ==========
 def parse_text(text: str) -> tuple:
     """
-    Заголовок = первый абзац (до первой пустой строки)
+    Заголовок = первое предложение или первые 2 предложения (до 150 символов)
     Основной текст = всё остальное
     """
     if not text:
@@ -36,18 +36,35 @@ def parse_text(text: str) -> tuple:
     
     text = text.strip()
     
-    # Разбиваем на абзацы по двойному переводу строки
-    paragraphs = re.split(r'\n\s*\n', text)
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    # Разбиваем на предложения по точкам, вопросительным и восклицательным знакам
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
     
-    if not paragraphs:
+    if not sentences:
         return "", ""
     
-    # Первый абзац - заголовок
-    title = paragraphs[0]
+    # Заголовок - первые 1-2 предложения, но не более 150 символов
+    title = ""
+    for i, sent in enumerate(sentences[:3]):  # Проверяем первые 3 предложения
+        if len(title) + len(sent) + 2 <= 150 and i < 2:  # максимум 2 предложения
+            if title:
+                title += ". " + sent
+            else:
+                title = sent
+        else:
+            break
     
-    # Все остальные абзацы - основной текст
-    content = "\n\n".join(paragraphs[1:]) if len(paragraphs) > 1 else ""
+    # Если заголовок пустой или слишком короткий, берем первое предложение
+    if not title or len(title) < 10:
+        title = sentences[0]
+        remaining_sentences = sentences[1:]
+    else:
+        # Находим, сколько предложений ушло в заголовок
+        title_sent_count = len(title.split('. '))
+        remaining_sentences = sentences[title_sent_count:]
+    
+    # Основной текст - всё остальное
+    content = ". ".join(remaining_sentences) if remaining_sentences else ""
     
     # ЛОГИРУЕМ РЕЗУЛЬТАТ
     logging.info(f"📝 Парсинг текста:")
@@ -60,7 +77,6 @@ def parse_text(text: str) -> tuple:
 async def generate_story(photo_path: str, title: str, content: str) -> str:
     W, H = 1080, 1920  # 9:16
     
-    # ЛОГИРУЕМ ВХОДНЫЕ ДАННЫЕ
     logging.info(f"🖼 Генерация сторис:")
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
@@ -177,7 +193,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_y_position = title_y + title_h + 20
     
     # 5. ОСНОВНОЙ ТЕКСТ
-    # ВСЕГДА рисуем текст, даже если он есть
     if content:
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
@@ -191,22 +206,38 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 except:
                     font = ImageFont.load_default()
                 
-                paragraphs = text.split('\n\n')
+                # Разбиваем на абзацы по точкам с пробелом
+                paragraphs = text.split('. ')
                 wrapped_paragraphs = []
                 total_height = 0
                 
-                for para in paragraphs:
+                # Группируем по 2-3 предложения в абзац
+                current_para = []
+                for sent in paragraphs:
+                    current_para.append(sent)
+                    if len(current_para) >= 3:
+                        para_text = ". ".join(current_para)
+                        chars_per_line = int(max_w / (size * 0.6))
+                        wrapped = textwrap.wrap(para_text, width=chars_per_line)
+                        if not wrapped:
+                            wrapped = [para_text]
+                        wrapped_paragraphs.append(wrapped)
+                        for line in wrapped:
+                            bbox = draw.textbbox((0, 0), line, font=font)
+                            total_height += bbox[3] - bbox[1]
+                        total_height += 15
+                        current_para = []
+                
+                if current_para:
+                    para_text = ". ".join(current_para)
                     chars_per_line = int(max_w / (size * 0.6))
-                    wrapped = textwrap.wrap(para, width=chars_per_line)
+                    wrapped = textwrap.wrap(para_text, width=chars_per_line)
                     if not wrapped:
-                        wrapped = [para]
+                        wrapped = [para_text]
                     wrapped_paragraphs.append(wrapped)
-                    
                     for line in wrapped:
                         bbox = draw.textbbox((0, 0), line, font=font)
                         total_height += bbox[3] - bbox[1]
-                    if len(paragraphs) > 1:
-                        total_height += 15
                 
                 if total_height <= max_h:
                     return font, wrapped_paragraphs
@@ -215,13 +246,26 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 font = ImageFont.truetype(FONT_PATH_REG, 22)
             except:
                 font = ImageFont.load_default()
-            paragraphs = text.split('\n\n')
+            
+            paragraphs = text.split('. ')
             wrapped_paragraphs = []
-            for para in paragraphs:
+            current_para = []
+            for sent in paragraphs:
+                current_para.append(sent)
+                if len(current_para) >= 3:
+                    para_text = ". ".join(current_para)
+                    chars_per_line = int(max_w / (22 * 0.6))
+                    wrapped = textwrap.wrap(para_text, width=chars_per_line)
+                    if not wrapped:
+                        wrapped = [para_text]
+                    wrapped_paragraphs.append(wrapped)
+                    current_para = []
+            if current_para:
+                para_text = ". ".join(current_para)
                 chars_per_line = int(max_w / (22 * 0.6))
-                wrapped = textwrap.wrap(para, width=chars_per_line)
+                wrapped = textwrap.wrap(para_text, width=chars_per_line)
                 if not wrapped:
-                    wrapped = [para]
+                    wrapped = [para_text]
                 wrapped_paragraphs.append(wrapped)
             return font, wrapped_paragraphs
         
@@ -229,18 +273,17 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         # Считаем общую высоту
         total_height = 0
-        for para_idx, para_lines in enumerate(wrapped_paragraphs):
+        for para_lines in wrapped_paragraphs:
             for line in para_lines:
                 bbox = draw.textbbox((0, 0), line, font=content_font)
                 total_height += bbox[3] - bbox[1]
-            if para_idx < len(wrapped_paragraphs) - 1:
-                total_height += 15
+            total_height += 15
         
         # Центрируем по вертикали
         start_y = title_y_position + (MAX_TEXT_H - total_height) // 2
         
         current_y = start_y
-        for para_idx, para_lines in enumerate(wrapped_paragraphs):
+        for para_lines in wrapped_paragraphs:
             for line in para_lines:
                 bbox = draw.textbbox((0, 0), line, font=content_font)
                 line_width = bbox[2] - bbox[0]
@@ -250,8 +293,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 draw.text((line_x, current_y), line, font=content_font, fill='#333333')
                 current_y += line_height
             
-            if para_idx < len(wrapped_paragraphs) - 1:
-                current_y += 15
+            current_y += 15
         
         logging.info(f"✅ Основной текст нарисован")
     else:
@@ -314,7 +356,7 @@ async def start(message: types.Message):
         "📱 Привет! Я делаю сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста, и я:\n"
         "1️⃣ Возьму фото на всю ширину\n"
-        "2️⃣ Первый абзац сделаю заголовком\n"
+        "2️⃣ Первое предложение сделаю заголовком\n"
         "3️⃣ Остальной текст размещу ниже\n\n"
         "Или отправь вручную: ФОТО → ЗАГОЛОВОК → ТЕКСТ"
     )
@@ -361,10 +403,10 @@ async def handle_forward(message: types.Message):
         line = line.strip()
         if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
             clean_lines.append(line)
-    text = '\n'.join(clean_lines)
+    text = ' '.join(clean_lines)  # Соединяем всё в одну строку
     logging.info(f"🧹 Очищенный текст ({len(text)} симв): {text[:200]}...")
     
-    # ПАРСИНГ: первый абзац = заголовок
+    # ПАРСИНГ: первое предложение = заголовок
     title, content = parse_text(text)
     
     # Если заголовок пустой - берем первые 2 предложения
@@ -463,13 +505,20 @@ if __name__ == "__main__":
     import asyncio
     from aiogram import executor
     
-    print("🚀 Бот запускается с логированием...")
+    print("🚀 Бот запускается...")
     
     async def delete_webhook():
-        await bot.delete_webhook()
-        print("✅ Вебхук удален")
+        try:
+            await bot.delete_webhook()
+            print("✅ Вебхук удален")
+        except Exception as e:
+            print(f"⚠️ Ошибка удаления вебхука: {e}")
     
     loop = asyncio.get_event_loop()
     loop.run_until_complete(delete_webhook())
     
-    executor.start_polling(dp, skip_updates=True)
+    # Запускаем polling с обработкой ошибок
+    try:
+        executor.start_polling(dp, skip_updates=True)
+    except Exception as e:
+        print(f"❌ Ошибка при запуске: {e}")
