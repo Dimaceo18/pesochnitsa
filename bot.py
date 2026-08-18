@@ -89,6 +89,34 @@ def parse_text(text: str) -> tuple:
     
     return title, content
 
+# ========== ФОРМАТИРОВАНИЕ ТЕКСТА В АБЗАЦЫ ==========
+def format_paragraphs(text: str) -> list:
+    """
+    Разбивает текст на абзацы по точкам с заглавной буквы
+    """
+    if not text:
+        return []
+    
+    # Разбиваем по точкам с пробелом и заглавной буквой
+    # Ищем паттерн: точка, пробел, заглавная буква
+    sentences = re.split(r'(?<=[.!?])\s+(?=[А-ЯA-Z])', text)
+    sentences = [s.strip() for s in sentences if s.strip()]
+    
+    # Группируем по 2-3 предложения в абзац
+    paragraphs = []
+    current_para = []
+    
+    for sent in sentences:
+        current_para.append(sent)
+        if len(current_para) >= 3:  # 3 предложения в абзаце
+            paragraphs.append(". ".join(current_para))
+            current_para = []
+    
+    if current_para:
+        paragraphs.append(". ".join(current_para))
+    
+    return paragraphs
+
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
     W, H = 1080, 1920  # 9:16
@@ -137,7 +165,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     # 4. ЗАГОЛОВОК
     SIDE_MARGIN = 40
-    TITLE_LINE_SPACING = 6  # Межстрочное расстояние для заголовка
+    TITLE_LINE_SPACING = 6
     title_y_position = PHOTO_HEIGHT + border_size + 25
     
     if title:
@@ -199,44 +227,46 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_font, title_lines = fit_title(title, MAX_TITLE_WIDTH)
         title_text = "\n".join(title_lines)
         
-        title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
-        title_h = title_bbox[3] - title_bbox[1]
-        
         title_x = SIDE_MARGIN
         title_y = title_y_position
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='white')
         
+        # Вычисляем высоту заголовка
         single_bbox = draw.textbbox((0, 0), "A", font=title_font)
         single_h = single_bbox[3] - single_bbox[1]
-        
         title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
-        title_y_position = title_y + title_total_h + 22  # Отступ после заголовка
+        
+        # ПРИНУДИТЕЛЬНЫЙ ОТСТУП ПОСЛЕ ЗАГОЛОВКА (35px)
+        title_y_position = title_y + title_total_h + 35
     
     # 5. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
+        # Разбиваем текст на абзацы
+        paragraphs = format_paragraphs(content)
+        logging.info(f"   Разбито на {len(paragraphs)} абзацев")
+        
         MAX_TEXT_W = W - (SIDE_MARGIN * 2)
         MAX_TEXT_H = H - title_y_position - 100
         
-        CONTENT_LINE_SPACING = 5  # Межстрочное расстояние для текста
+        CONTENT_LINE_SPACING = 5
         
-        def fit_content(text, max_w, max_h):
+        def fit_content(paragraphs_list, max_w, max_h):
             for size in range(40, 22, -2):
                 try:
                     font = ImageFont.truetype(FONT_PATH_REG, size)
                 except:
                     font = ImageFont.load_default()
                 
-                paragraphs = text.split('\n\n')
                 wrapped_paragraphs = []
                 total_height = 0
                 
                 single_bbox = draw.textbbox((0, 0), "A", font=font)
                 single_h = single_bbox[3] - single_bbox[1]
                 
-                for para in paragraphs:
+                for para in paragraphs_list:
                     chars_per_line = int(max_w / (size * 0.6))
                     wrapped = textwrap.wrap(para, width=chars_per_line)
                     if not wrapped:
@@ -245,7 +275,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                     
                     para_height = len(wrapped) * single_h + CONTENT_LINE_SPACING * (len(wrapped) - 1)
                     total_height += para_height
-                    total_height += 12  # Отступ между абзацами
+                    total_height += 15  # Отступ между абзацами
                 
                 if total_height <= max_h:
                     return font, wrapped_paragraphs, single_h
@@ -258,9 +288,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             single_bbox = draw.textbbox((0, 0), "A", font=font)
             single_h = single_bbox[3] - single_bbox[1]
             
-            paragraphs = text.split('\n\n')
             wrapped_paragraphs = []
-            for para in paragraphs:
+            for para in paragraphs_list:
                 chars_per_line = int(max_w / (22 * 0.6))
                 wrapped = textwrap.wrap(para, width=chars_per_line)
                 if not wrapped:
@@ -268,18 +297,19 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 wrapped_paragraphs.append(wrapped)
             return font, wrapped_paragraphs, single_h
         
-        content_font, wrapped_paragraphs, single_h = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
+        content_font, wrapped_paragraphs, single_h = fit_content(paragraphs, MAX_TEXT_W, MAX_TEXT_H)
         
-        start_y = title_y_position
+        # Начинаем рисовать текст СРАЗУ ПОСЛЕ ЗАГОЛОВКА
+        current_y = title_y_position
         
-        current_y = start_y
         for para_lines in wrapped_paragraphs:
             for line in para_lines:
                 line_x = SIDE_MARGIN
                 draw.text((line_x, current_y), line, font=content_font, fill='white')
                 current_y += single_h + CONTENT_LINE_SPACING
             
-            current_y += 12  # Отступ между абзацами
+            # Отступ между абзацами
+            current_y += 15
         
         logging.info(f"✅ Основной текст нарисован")
     else:
