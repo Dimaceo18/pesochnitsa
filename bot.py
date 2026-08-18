@@ -26,7 +26,8 @@ W, H = 1080, 1920
 
 # Отступы
 SIDE_MARGIN = 40
-GAP_BETWEEN_TITLE_AND_TEXT = 30  # Расстояние между заголовком и текстом
+GAP_BETWEEN_TITLE_AND_TEXT = 25  # Расстояние между заголовком и текстом
+MAX_PHOTO_HEIGHT = 700  # МАКСИМАЛЬНАЯ ВЫСОТА ФОТО (чтобы осталось место для текста)
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -172,15 +173,20 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw = ImageDraw.Draw(canvas)
     
     # ============================================================
-    # ШАГ 2: ВСТАВЛЯЕМ ФОТО
+    # ШАГ 2: ВСТАВЛЯЕМ ФОТО (ОГРАНИЧЕННОЙ ВЫСОТЫ)
     # ============================================================
     photo = Image.open(photo_path).convert("RGB")
     photo_ratio = photo.width / photo.height
     PHOTO_HEIGHT = int(W / photo_ratio)
     
-    if PHOTO_HEIGHT > 960:
-        PHOTO_HEIGHT = 960
-        photo = photo.crop((0, 0, photo.width, int(photo.width / (W / PHOTO_HEIGHT))))
+    # ОГРАНИЧИВАЕМ ВЫСОТУ ФОТО, чтобы осталось место для текста
+    if PHOTO_HEIGHT > MAX_PHOTO_HEIGHT:
+        PHOTO_HEIGHT = MAX_PHOTO_HEIGHT
+        # Обрезаем фото по центру по высоте
+        crop_height = int(photo.width / (W / PHOTO_HEIGHT))
+        if crop_height < photo.height:
+            top = (photo.height - crop_height) // 2
+            photo = photo.crop((0, top, photo.width, top + crop_height))
     
     photo = photo.resize((W, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
     photo = apply_retro_effect(photo)
@@ -208,7 +214,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # ============================================================
     # ШАГ 4: РИСУЕМ ЗАГОЛОВОК
     # ============================================================
-    current_y = PHOTO_HEIGHT + border_size + 30
+    current_y = PHOTO_HEIGHT + border_size + 25
     
     if title:
         MAX_TITLE_WIDTH = W - (SIDE_MARGIN * 2)
@@ -274,7 +280,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_end_y = current_y + title_total_h
         
         # ============================================================
-        # ШАГ 5: ПРИНУДИТЕЛЬНЫЙ ОТСТУП 30px МЕЖДУ ЗАГОЛОВКОМ И ТЕКСТОМ
+        # ШАГ 5: ОТСТУП 25px МЕЖДУ ЗАГОЛОВКОМ И ТЕКСТОМ
         # ============================================================
         current_y = title_end_y + GAP_BETWEEN_TITLE_AND_TEXT
         
