@@ -208,8 +208,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     TITLE_LINE_SPACING = 6
     GAP_BETWEEN_PHOTO_AND_TITLE = 30
     
-    # Расстояние между заголовком и текстом (фиксированное)
-    GAP_BETWEEN_TITLE_AND_TEXT = 60
+    # ПРОСТОЙ ОТСТУП: 10px до линии, 10px после линии
+    GAP_BEFORE_LINE = 10
+    GAP_AFTER_LINE = 10
     
     # 5. ЗАГОЛОВОК
     title_y_position = PHOTO_HEIGHT + border_size + GAP_BETWEEN_PHOTO_AND_TITLE
@@ -278,18 +279,15 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='white')
         
-        # ВЫЧИСЛЯЕМ КОНЕЦ ЗАГОЛОВКА
+        # Вычисляем конец заголовка
         single_bbox = draw.textbbox((0, 0), "A", font=title_font)
         single_h = single_bbox[3] - single_bbox[1]
         title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
         title_end_y = title_y + title_total_h
         
-        # ===== РАЗДЕЛИТЕЛЬ (строго по центру) =====
-        # Где начинается текст?
-        text_start_y = title_end_y + GAP_BETWEEN_TITLE_AND_TEXT
-        
-        # Где линия? Ровно посередине между концом заголовка и началом текста
-        line_y = title_end_y + (GAP_BETWEEN_TITLE_AND_TEXT // 2)
+        # ===== РАЗДЕЛИТЕЛЬ (ПРОСТАЯ ЛОГИКА) =====
+        # Линия через 10px после заголовка
+        line_y = title_end_y + GAP_BEFORE_LINE
         
         # Рисуем линию
         LINE_WIDTH = W - (SIDE_MARGIN * 2)
@@ -299,8 +297,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.rectangle([LINE_X1, line_y, LINE_X2, line_y + LINE_HEIGHT], fill='white')
         
-        # Обновляем позицию для текста
-        title_y_position = text_start_y
+        # Текст начинается через 10px после линии
+        title_y_position = line_y + LINE_HEIGHT + GAP_AFTER_LINE
     
     # 6. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
