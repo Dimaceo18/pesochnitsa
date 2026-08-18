@@ -26,16 +26,16 @@ W, H = 1080, 1920
 
 # ОТСТУПЫ
 SIDE_MARGIN = 40
-PHOTO_HEIGHT = 580
+PHOTO_HEIGHT = 667  # 580 + 15% = 667
 BORDER_SIZE = 8
 GAP_AFTER_PHOTO = 20
-GAP_AFTER_TITLE = 30
+GAP_AFTER_TITLE = 25
 GRAY_BLOCK_H = 60
 
 # ДИАПАЗОНЫ РАЗМЕРОВ ШРИФТА
-MIN_TITLE_SIZE = 36
+MIN_TITLE_SIZE = 34
 MAX_TITLE_SIZE = 72
-MIN_CONTENT_SIZE = 22
+MIN_CONTENT_SIZE = 20
 MAX_CONTENT_SIZE = 44
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
@@ -170,7 +170,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw = ImageDraw.Draw(canvas)
     
     # ============================================================
-    # ШАГ 2: ВСТАВЛЯЕМ ФОТО
+    # ШАГ 2: ВСТАВЛЯЕМ ФОТО (УВЕЛИЧЕННОЕ)
     # ============================================================
     photo = Image.open(photo_path).convert("RGB")
     
@@ -216,7 +216,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     title_start_y = PHOTO_HEIGHT + BORDER_SIZE + GAP_AFTER_PHOTO
     
     # Доступная высота для всего текста (от заголовка до серого блока)
-    AVAILABLE_HEIGHT = H - title_start_y - GRAY_BLOCK_H - 40
+    AVAILABLE_HEIGHT = H - title_start_y - GRAY_BLOCK_H - 20
     
     # Ширина текста
     MAX_TEXT_W = W - (SIDE_MARGIN * 2)
@@ -249,13 +249,12 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             
             # Проверяем, что заголовок помещается (1-3 строки)
             if 1 <= len(lines) <= 3:
-                # Проверяем высоту заголовка
                 test_text = "\n".join(lines)
                 bbox = draw.textbbox((0, 0), test_text, font=font)
                 title_h = bbox[3] - bbox[1]
                 
-                # Заголовок не должен занимать больше 40% доступной высоты
-                if title_h <= available_height * 0.4:
+                # Заголовок не должен занимать больше 35% доступной высоты
+                if title_h <= available_height * 0.35:
                     return font, lines, size
         
         # Если ничего не подошло - минимальный размер
@@ -283,9 +282,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # ШАГ 6: АДАПТИВНЫЙ ПОДБОР РАЗМЕРА ШРИФТА ДЛЯ ОСНОВНОГО ТЕКСТА
     # ============================================================
     def fit_content(paragraphs_list, max_width, available_height, title_height):
-        """Подбирает размер шрифта для основного текста, чтобы заполнить всё пространство"""
+        """Подбирает размер шрифта для основного текста, чтобы заполнить всё пространство до серого блока"""
         remaining_height = available_height - title_height - GAP_AFTER_TITLE
         
+        # Пробуем размер от максимального к минимальному
         for size in range(MAX_CONTENT_SIZE, MIN_CONTENT_SIZE - 1, -2):
             try:
                 font = ImageFont.truetype(FONT_PATH_REG, size)
@@ -330,7 +330,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         return font, wrapped_paragraphs, single_h, MIN_CONTENT_SIZE
     
     # ============================================================
-    # ШАГ 7: РИСУЕМ ЗАГОЛОВОК И ТЕКСТ С АДАПТИВНЫМИ РАЗМЕРАМИ
+    # ШАГ 7: РИСУЕМ ЗАГОЛОВОК И ТЕКСТ
     # ============================================================
     title_y = title_start_y
     
@@ -350,7 +350,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         logging.info(f"📐 Размер заголовка: {title_size}px, строк: {len(title_lines)}")
         
         # ============================================================
-        # ШАГ 8: РИСУЕМ ОСНОВНОЙ ТЕКСТ
+        # ШАГ 8: РИСУЕМ ОСНОВНОЙ ТЕКСТ (заполняет всё пространство до серого блока)
         # ============================================================
         if content and content != "Текст отсутствует":
             logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
@@ -366,13 +366,31 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             
             logging.info(f"📐 Размер основного текста: {content_size}px")
             
-            # Рисуем текст
+            # Рисуем текст, заполняя всё пространство до серого блока
             pos_y = text_y
+            
+            # Вычисляем общую высоту текста, чтобы растянуть его
+            total_text_height = 0
+            for para_lines in wrapped_paragraphs:
+                for _ in para_lines:
+                    total_text_height += single_h + 8
+                total_text_height += 18
+            
+            # Если текст не заполняет всё пространство, увеличиваем межстрочный интервал
+            remaining_space = (H - text_y - GRAY_BLOCK_H - 20) - total_text_height
+            extra_spacing = 0
+            if remaining_space > 0 and len(wrapped_paragraphs) > 0:
+                # Считаем общее количество строк
+                total_lines = sum(len(para) for para in wrapped_paragraphs)
+                if total_lines > 0:
+                    extra_spacing = remaining_space / total_lines
+            
+            # Рисуем текст с дополнительным межстрочным интервалом
             for para_idx, para_lines in enumerate(wrapped_paragraphs):
                 for line in para_lines:
                     line_x = SIDE_MARGIN
                     draw.text((line_x, pos_y), line, font=content_font, fill='white')
-                    pos_y += single_h + 8
+                    pos_y += single_h + 8 + extra_spacing
                 
                 pos_y += 18
                 logging.info(f"   Абзац {para_idx + 1} нарисован")
