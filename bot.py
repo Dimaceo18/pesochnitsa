@@ -25,17 +25,18 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-# ========== ПАРСИНГ ТЕКСТА ==========
+# ========== ПАРСИНГ ТЕКСТА (ПРОСТОЙ) ==========
 def parse_text(text: str) -> tuple:
     """
-    Разделяет текст на заголовок (первый абзац) и основной текст (всё остальное).
+    Заголовок = первый абзац (до первой пустой строки)
+    Основной текст = всё остальное
     """
     if not text:
         return "", ""
     
     text = text.strip()
     
-    # Разбиваем на абзацы (по двойному переводу строки)
+    # Разбиваем на абзацы по двойному переводу строки
     paragraphs = re.split(r'\n\s*\n', text)
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
     
@@ -48,15 +49,6 @@ def parse_text(text: str) -> tuple:
     # Все остальные абзацы - основной текст
     content = "\n\n".join(paragraphs[1:]) if len(paragraphs) > 1 else ""
     
-    # Если заголовок слишком длинный (> 150 символов), обрезаем
-    if len(title) > 150:
-        match = re.search(r'[.!?]\s+', title)
-        if match:
-            title = title[:match.end()].strip()
-            remaining = title[match.end():].strip()
-            if remaining:
-                content = remaining + "\n\n" + content if content else remaining
-    
     return title, content
 
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
@@ -68,30 +60,26 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw = ImageDraw.Draw(canvas)
     
     # 2. ФОТО НА ВСЮ ШИРИНУ (с обводкой только снизу)
-    PHOTO_WIDTH = W  # 1080px
+    PHOTO_WIDTH = W
     PHOTO_X = 0
     
-    # Рассчитываем высоту фото, сохраняя пропорции
     photo = Image.open(photo_path).convert("RGB")
     photo_ratio = photo.width / photo.height
     PHOTO_HEIGHT = int(PHOTO_WIDTH / photo_ratio)
     
-    # Если фото слишком высокое - обрезаем по высоте, сохраняя центр
-    if PHOTO_HEIGHT > 960:  # Ограничиваем высоту, чтобы осталось место для текста
+    # Ограничиваем высоту фото, чтобы осталось место для текста
+    if PHOTO_HEIGHT > 960:
         PHOTO_HEIGHT = 960
-        # Обрезаем фото по центру по высоте
         photo = photo.crop((0, 0, photo.width, int(photo.width / (PHOTO_WIDTH / PHOTO_HEIGHT))))
     
     photo = photo.resize((PHOTO_WIDTH, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
     
-    # Рисуем черную обводку ТОЛЬКО снизу (8px)
+    # Обводка только снизу (8px)
     border_size = 8
-    # Создаем фото с обводкой
     bordered_photo = Image.new('RGB', (PHOTO_WIDTH, PHOTO_HEIGHT + border_size), color='black')
     bordered_photo.paste(photo, (0, 0))
     
-    # Вставляем фото на холст
-    PHOTO_Y = 0  # Фото сверху
+    PHOTO_Y = 0
     canvas.paste(bordered_photo, (PHOTO_X, PHOTO_Y))
     
     # 3. ЗАГРУЗКА ШРИФТОВ
@@ -99,16 +87,16 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         font_bold = ImageFont.truetype(FONT_PATH_BOLD, 60)
     except:
         font_bold = ImageFont.load_default()
-        logging.warning(f"Шрифт {FONT_PATH_BOLD} не найден, использую дефолтный")
+        logging.warning(f"Шрифт {FONT_PATH_BOLD} не найден")
     
     try:
         font_reg = ImageFont.truetype(FONT_PATH_REG, 40)
     except:
         font_reg = ImageFont.load_default()
-        logging.warning(f"Шрифт {FONT_PATH_REG} не найден, использую дефолтный")
+        logging.warning(f"Шрифт {FONT_PATH_REG} не найден")
     
-    # 4. ЗАГОЛОВОК (жирный, ВСЕ БОЛЬШИЕ БУКВЫ, 2-3 строки)
-    title_y_position = PHOTO_HEIGHT + border_size + 25  # Отступ от фото
+    # 4. ЗАГОЛОВОК
+    title_y_position = PHOTO_HEIGHT + border_size + 25
     
     if title:
         MAX_TITLE_WIDTH = W - 80
@@ -178,12 +166,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='black')
         
-        # Обновляем позицию для основного текста
         title_y_position = title_y + title_h + 20
     
-    # 5. ОСНОВНОЙ ТЕКСТ (сохраняем абзацы)
+    # 5. ОСНОВНОЙ ТЕКСТ
     if content:
-        MAX_TEXT_H = H - title_y_position - 100  # 100px для желтого блока
+        MAX_TEXT_H = H - title_y_position - 100
         MAX_TEXT_W = W - 80
         
         def fit_content(text, max_w, max_h):
@@ -229,7 +216,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         content_font, wrapped_paragraphs = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
         
-        # Считаем общую высоту для центрирования
+        # Считаем общую высоту
         total_height = 0
         for para_idx, para_lines in enumerate(wrapped_paragraphs):
             for line in para_lines:
@@ -238,10 +225,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             if para_idx < len(wrapped_paragraphs) - 1:
                 total_height += 15
         
-        # Центрируем текст по вертикали в доступной области
+        # Центрируем по вертикали
         start_y = title_y_position + (MAX_TEXT_H - total_height) // 2
         
-        # Рисуем текст
         current_y = start_y
         for para_idx, para_lines in enumerate(wrapped_paragraphs):
             for line in para_lines:
@@ -256,14 +242,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             if para_idx < len(wrapped_paragraphs) - 1:
                 current_y += 15
     
-    # 6. ЖЕЛТЫЙ ПРЯМОУГОЛЬНИК ВНИЗУ
+    # 6. ЖЕЛТЫЙ БЛОК ВНИЗУ
     YELLOW_BLOCK_H = 60
     YELLOW_BLOCK_Y = H - YELLOW_BLOCK_H
     
-    draw.rectangle(
-        [0, YELLOW_BLOCK_Y, W, H],
-        fill='#FFD700'
-    )
+    draw.rectangle([0, YELLOW_BLOCK_Y, W, H], fill='#FFD700')
     
     try:
         footer_font = ImageFont.truetype(FONT_PATH_BOLD, 28)
@@ -284,14 +267,14 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     canvas.save(output_path, "PNG")
     return output_path
 
-# ========== ОБЩАЯ ФУНКЦИЯ ДЛЯ ОБРАБОТКИ ==========
+# ========== ОБЩАЯ ФУНКЦИЯ ==========
 async def process_story(user_id: int, photo_path: str, title: str, content: str, message: types.Message):
     try:
         output = await generate_story(photo_path, title, content)
         await bot.send_photo(
             chat_id=user_id,
             photo=InputFile(output),
-            caption="✅ Готово! Твоя сторис."
+            caption="✅ Готово!"
         )
         if os.path.exists(photo_path):
             os.remove(photo_path)
@@ -308,16 +291,12 @@ user_data = {}
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer(
-        "📱 Привет! Я делаю сторис в белом стиле!\n\n"
-        "Просто отправь мне РЕПОСТ любого поста из Telegram, и я:\n"
+        "📱 Привет! Я делаю сторис!\n\n"
+        "Просто отправь мне РЕПОСТ любого поста, и я:\n"
         "1️⃣ Возьму фото на всю ширину\n"
-        "2️⃣ Первый абзац сделаю заголовком (жирный, ВСЕ БОЛЬШИЕ)\n"
-        "3️⃣ Остальной текст сохраню с абзацами\n"
-        "4️⃣ Добавлю желтый блок внизу\n\n"
-        "Или отправь данные вручную:\n"
-        "1. ФОТО\n"
-        "2. ЗАГОЛОВОК (текстом)\n"
-        "3. ОСНОВНОЙ ТЕКСТ (текстом)"
+        "2️⃣ Первый абзац сделаю заголовком\n"
+        "3️⃣ Остальной текст размещу ниже\n\n"
+        "Или отправь вручную: ФОТО → ЗАГОЛОВОК → ТЕКСТ"
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
 
@@ -346,10 +325,10 @@ async def handle_forward(message: types.Message):
         photo_file_path = f"temp_{user_id}_forward.jpg"
         await bot.download_file(file.file_path, photo_file_path)
     else:
-        await message.answer("❌ В репосте нет фото! Пожалуйста, отправь репост с изображением.")
+        await message.answer("❌ В репосте нет фото!")
         return
     
-    # Очищаем текст
+    # Очищаем мусор
     text = text.replace("**Текст отсутствует**", "").strip()
     lines = text.split('\n')
     clean_lines = []
@@ -359,8 +338,10 @@ async def handle_forward(message: types.Message):
             clean_lines.append(line)
     text = '\n'.join(clean_lines)
     
+    # ПАРСИНГ: первый абзац = заголовок, остальное = текст
     title, content = parse_text(text)
     
+    # Если заголовок пустой - берем первые 2 предложения
     if not title and text:
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         title = ". ".join(sentences[:2])
@@ -371,21 +352,14 @@ async def handle_forward(message: types.Message):
     if not content:
         content = "Текст отсутствует"
     
-    if len(title) > 150:
-        last_dot = title.rfind('.', 0, 150)
-        if last_dot > 0:
-            content = title[last_dot+1:].strip() + "\n\n" + content if content else title[last_dot+1:].strip()
-            title = title[:last_dot+1].strip()
+    await message.answer(f"📝 Заголовок: {title[:50]}...\n\n⏳ Генерирую...")
     
-    await message.answer(f"📝 Заголовок: {title[:50]}...\n\n⏳ Генерирую сторис...")
+    await process_story(user_id, photo_file_path, title, content, message)
     
-    success = await process_story(user_id, photo_file_path, title, content, message)
-    
-    if success:
-        if user_id in user_data:
-            del user_data[user_id]
+    if user_id in user_data:
+        del user_data[user_id]
 
-# ========== ОБРАБОТКА РУЧНОГО ВВОДА ==========
+# ========== РУЧНОЙ ВВОД ==========
 @dp.message_handler(content_types=['photo'])
 async def handle_photo(message: types.Message):
     user_id = message.from_user.id
@@ -402,8 +376,7 @@ async def handle_photo(message: types.Message):
         file_path = f"temp_{user_id}.jpg"
         await bot.download_file(file.file_path, file_path)
         
-        await message.answer("⏳ Генерирую сторис из фото и подписи...")
-        
+        await message.answer("⏳ Генерирую...")
         await process_story(user_id, file_path, title, content, message)
         return
     
@@ -416,7 +389,7 @@ async def handle_photo(message: types.Message):
 
     user_data[user_id]["photo"] = file_path
     user_data[user_id]["step"] = "waiting_title"
-    await message.answer("✅ Фото принято! Теперь отправь ЗАГОЛОВОК (текстом).")
+    await message.answer("✅ Фото принято! Теперь отправь ЗАГОЛОВОК.")
 
 @dp.message_handler(content_types=['text'])
 async def handle_text(message: types.Message):
@@ -443,7 +416,7 @@ async def handle_text(message: types.Message):
         user_data[user_id]["content"] = message.text
         user_data[user_id]["step"] = "done"
 
-        await message.answer("⏳ Генерирую сторис... Подожди пару секунд.")
+        await message.answer("⏳ Генерирую...")
 
         photo_path = user_data[user_id]["photo"]
         title = user_data[user_id]["title"]
