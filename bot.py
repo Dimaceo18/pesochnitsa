@@ -208,9 +208,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     TITLE_LINE_SPACING = 6
     GAP_BETWEEN_PHOTO_AND_TITLE = 30
     
-    # ПРОСТОЙ ОТСТУП: 10px до линии, 10px после линии
-    GAP_BEFORE_LINE = 10
-    GAP_AFTER_LINE = 10
+    # ЖЕСТКИЕ ОТСТУПЫ
+    LINE_THICKNESS = 2
+    SPACE_BEFORE_LINE = 10  # 10px от заголовка до линии
+    SPACE_AFTER_LINE = 10   # 10px от линии до текста
     
     # 5. ЗАГОЛОВОК
     title_y_position = PHOTO_HEIGHT + border_size + GAP_BETWEEN_PHOTO_AND_TITLE
@@ -277,28 +278,36 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_x = SIDE_MARGIN
         title_y = title_y_position
         
+        # РИСУЕМ ЗАГОЛОВОК
         draw.text((title_x, title_y), title_text, font=title_font, fill='white')
         
-        # Вычисляем конец заголовка
+        # Вычисляем конец заголовка (нижняя граница)
         single_bbox = draw.textbbox((0, 0), "A", font=title_font)
         single_h = single_bbox[3] - single_bbox[1]
         title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
         title_end_y = title_y + title_total_h
         
-        # ===== РАЗДЕЛИТЕЛЬ (ПРОСТАЯ ЛОГИКА) =====
-        # Линия через 10px после заголовка
-        line_y = title_end_y + GAP_BEFORE_LINE
+        # ===== РАЗДЕЛИТЕЛЬ С ЖЕСТКИМИ ОТСТУПАМИ =====
+        # 1. Отступаем 10px от заголовка
+        line_y = title_end_y + SPACE_BEFORE_LINE
         
-        # Рисуем линию
+        # 2. Рисуем линию
         LINE_WIDTH = W - (SIDE_MARGIN * 2)
         LINE_X1 = SIDE_MARGIN
         LINE_X2 = SIDE_MARGIN + LINE_WIDTH
-        LINE_HEIGHT = 2
         
-        draw.rectangle([LINE_X1, line_y, LINE_X2, line_y + LINE_HEIGHT], fill='white')
+        draw.rectangle([LINE_X1, line_y, LINE_X2, line_y + LINE_THICKNESS], fill='white')
         
-        # Текст начинается через 10px после линии
-        title_y_position = line_y + LINE_HEIGHT + GAP_AFTER_LINE
+        # 3. Отступаем 10px после линии
+        text_start_y = line_y + LINE_THICKNESS + SPACE_AFTER_LINE
+        
+        # Сохраняем позицию для текста
+        title_y_position = text_start_y
+        
+        logging.info(f"📐 Отступы:")
+        logging.info(f"   Конец заголовка: {title_end_y}")
+        logging.info(f"   Линия на: {line_y}")
+        logging.info(f"   Начало текста: {text_start_y}")
     
     # 6. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
