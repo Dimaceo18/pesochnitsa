@@ -25,7 +25,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-# ========== ПАРСИНГ ТЕКСТА (УЛУЧШЕННЫЙ) ==========
+# ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
     """
     Заголовок = первое предложение или первые 2 предложения (до 150 символов)
@@ -45,8 +45,8 @@ def parse_text(text: str) -> tuple:
     
     # Заголовок - первые 1-2 предложения, но не более 150 символов
     title = ""
-    for i, sent in enumerate(sentences[:3]):  # Проверяем первые 3 предложения
-        if len(title) + len(sent) + 2 <= 150 and i < 2:  # максимум 2 предложения
+    for i, sent in enumerate(sentences[:3]):
+        if len(title) + len(sent) + 2 <= 150 and i < 2:
             if title:
                 title += ". " + sent
             else:
@@ -54,19 +54,15 @@ def parse_text(text: str) -> tuple:
         else:
             break
     
-    # Если заголовок пустой или слишком короткий, берем первое предложение
     if not title or len(title) < 10:
         title = sentences[0]
         remaining_sentences = sentences[1:]
     else:
-        # Находим, сколько предложений ушло в заголовок
         title_sent_count = len(title.split('. '))
         remaining_sentences = sentences[title_sent_count:]
     
-    # Основной текст - всё остальное
     content = ". ".join(remaining_sentences) if remaining_sentences else ""
     
-    # ЛОГИРУЕМ РЕЗУЛЬТАТ
     logging.info(f"📝 Парсинг текста:")
     logging.info(f"   Заголовок ({len(title)} симв): {title[:100]}...")
     logging.info(f"   Контент ({len(content)} симв): {content[:100] if content else 'ПУСТО'}...")
@@ -119,7 +115,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         font_reg = ImageFont.load_default()
         logging.warning(f"Шрифт {FONT_PATH_REG} не найден")
     
-    # 4. ЗАГОЛОВОК
+    # 4. ЗАГОЛОВОК (по центру)
     title_y_position = PHOTO_HEIGHT + border_size + 25
     
     if title:
@@ -190,14 +186,19 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='black')
         
-        title_y_position = title_y + title_h + 20
+        # МЕНЬШЕ РАССТОЯНИЕ МЕЖДУ ЗАГОЛОВКОМ И ТЕКСТОМ (было 20, стало 8)
+        title_y_position = title_y + title_h + 8
     
-    # 5. ОСНОВНОЙ ТЕКСТ
+    # 5. ОСНОВНОЙ ТЕКСТ (по левому краю с отступами)
     if content:
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
-        MAX_TEXT_H = H - title_y_position - 100
-        MAX_TEXT_W = W - 80
+        # Отступы по бокам (одинаковые слева и справа)
+        SIDE_MARGIN = 40
+        MAX_TEXT_W = W - (SIDE_MARGIN * 2)
+        
+        # Доступная высота для текста
+        MAX_TEXT_H = H - title_y_position - 100  # 100px для желтого блока
         
         def fit_content(text, max_w, max_h):
             for size in range(40, 22, -2):
@@ -211,11 +212,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 wrapped_paragraphs = []
                 total_height = 0
                 
-                # Группируем по 2-3 предложения в абзац
+                # Группируем по 3-4 предложения в абзац для читаемости
                 current_para = []
                 for sent in paragraphs:
                     current_para.append(sent)
-                    if len(current_para) >= 3:
+                    if len(current_para) >= 4:
                         para_text = ". ".join(current_para)
                         chars_per_line = int(max_w / (size * 0.6))
                         wrapped = textwrap.wrap(para_text, width=chars_per_line)
@@ -225,7 +226,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                         for line in wrapped:
                             bbox = draw.textbbox((0, 0), line, font=font)
                             total_height += bbox[3] - bbox[1]
-                        total_height += 15
+                        total_height += 12  # Отступ между абзацами
                         current_para = []
                 
                 if current_para:
@@ -252,7 +253,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             current_para = []
             for sent in paragraphs:
                 current_para.append(sent)
-                if len(current_para) >= 3:
+                if len(current_para) >= 4:
                     para_text = ". ".join(current_para)
                     chars_per_line = int(max_w / (22 * 0.6))
                     wrapped = textwrap.wrap(para_text, width=chars_per_line)
@@ -277,10 +278,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             for line in para_lines:
                 bbox = draw.textbbox((0, 0), line, font=content_font)
                 total_height += bbox[3] - bbox[1]
-            total_height += 15
+            total_height += 12
         
-        # Центрируем по вертикали
-        start_y = title_y_position + (MAX_TEXT_H - total_height) // 2
+        # Начинаем с отступа сверху (не центрируем, а начинаем сверху)
+        start_y = title_y_position + 5  # Небольшой отступ после заголовка
         
         current_y = start_y
         for para_lines in wrapped_paragraphs:
@@ -289,11 +290,12 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 line_width = bbox[2] - bbox[0]
                 line_height = bbox[3] - bbox[1]
                 
-                line_x = (W - line_width) // 2
+                # ТЕКСТ ПО ЛЕВОМУ КРАЮ с отступом SIDE_MARGIN
+                line_x = SIDE_MARGIN
                 draw.text((line_x, current_y), line, font=content_font, fill='#333333')
                 current_y += line_height
             
-            current_y += 15
+            current_y += 12  # Отступ между абзацами
         
         logging.info(f"✅ Основной текст нарисован")
     else:
@@ -374,11 +376,9 @@ async def handle_forward(message: types.Message):
     
     await message.answer("📥 Обнаружен репост! Обрабатываю...")
     
-    # ПОЛУЧАЕМ ТЕКСТ
     text = message.text or message.caption or ""
     logging.info(f"📥 Исходный текст репоста ({len(text)} симв): {text[:200]}...")
     
-    # Ищем фото
     photo_file_path = None
     
     if message.photo:
@@ -403,13 +403,11 @@ async def handle_forward(message: types.Message):
         line = line.strip()
         if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
             clean_lines.append(line)
-    text = ' '.join(clean_lines)  # Соединяем всё в одну строку
+    text = ' '.join(clean_lines)
     logging.info(f"🧹 Очищенный текст ({len(text)} симв): {text[:200]}...")
     
-    # ПАРСИНГ: первое предложение = заголовок
     title, content = parse_text(text)
     
-    # Если заголовок пустой - берем первые 2 предложения
     if not title and text:
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         title = ". ".join(sentences[:2])
@@ -517,7 +515,6 @@ if __name__ == "__main__":
     loop = asyncio.get_event_loop()
     loop.run_until_complete(delete_webhook())
     
-    # Запускаем polling с обработкой ошибок
     try:
         executor.start_polling(dp, skip_updates=True)
     except Exception as e:
