@@ -26,7 +26,7 @@ W, H = 1080, 1920
 
 # Отступы
 SIDE_MARGIN = 40
-GAP_BETWEEN_TITLE_AND_TEXT = 15  # Расстояние между заголовком и текстом
+GAP_BETWEEN_TITLE_AND_TEXT = 30  # Расстояние между заголовком и текстом
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -274,7 +274,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_end_y = current_y + title_total_h
         
         # ============================================================
-        # ШАГ 5: ОТСТУП МЕЖДУ ЗАГОЛОВКОМ И ТЕКСТОМ (15px)
+        # ШАГ 5: ПРИНУДИТЕЛЬНЫЙ ОТСТУП 30px МЕЖДУ ЗАГОЛОВКОМ И ТЕКСТОМ
         # ============================================================
         current_y = title_end_y + GAP_BETWEEN_TITLE_AND_TEXT
         
