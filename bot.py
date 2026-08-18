@@ -231,16 +231,27 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='white')
         
-        # Вычисляем высоту заголовка (одна строка)
+        # Вычисляем высоту заголовка
         single_bbox = draw.textbbox((0, 0), "A", font=title_font)
         single_h = single_bbox[3] - single_bbox[1]
         title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
         
-        # 1 ПУСТАЯ СТРОКА = высота одной строки заголовка + небольшой отступ
-        empty_line_height = single_h + 10
+        # Обновляем позицию после заголовка
+        title_y_position = title_y + title_total_h + 20
         
-        # Обновляем позицию: после заголовка + 1 пустая строка
-        title_y_position = title_y + title_total_h + empty_line_height
+        # ===== РАЗДЕЛИТЕЛЬ =====
+        # Тонкая белая полоска между заголовком и текстом
+        LINE_Y = title_y_position
+        LINE_WIDTH = W - (SIDE_MARGIN * 2)  # Такая же ширина, как у текста
+        LINE_X1 = SIDE_MARGIN
+        LINE_X2 = SIDE_MARGIN + LINE_WIDTH
+        LINE_HEIGHT = 2  # Толщина линии
+        
+        # Рисуем тонкую белую линию
+        draw.rectangle([LINE_X1, LINE_Y, LINE_X2, LINE_Y + LINE_HEIGHT], fill='white')
+        
+        # Обновляем позицию для основного текста (после линии + отступ)
+        title_y_position = LINE_Y + LINE_HEIGHT + 20
     
     # 5. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
@@ -301,7 +312,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         content_font, wrapped_paragraphs, single_h = fit_content(paragraphs, MAX_TEXT_W, MAX_TEXT_H)
         
-        # Начинаем рисовать текст после пустой строки
+        # Начинаем рисовать текст после разделителя
         current_y = title_y_position
         
         for para_lines in wrapped_paragraphs:
@@ -374,7 +385,8 @@ async def start(message: types.Message):
         "Просто отправь мне РЕПОСТ любого поста, и я:\n"
         "1️⃣ Возьму фото на всю ширину\n"
         "2️⃣ Первый абзац сделаю заголовком\n"
-        "3️⃣ Остальной текст размещу ниже\n\n"
+        "3️⃣ Добавлю разделитель между заголовком и текстом\n"
+        "4️⃣ Остальной текст размещу ниже\n\n"
         "Или отправь вручную: ФОТО → ЗАГОЛОВОК → ТЕКСТ"
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
