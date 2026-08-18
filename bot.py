@@ -26,9 +26,7 @@ W, H = 1080, 1920
 
 # Отступы
 SIDE_MARGIN = 40
-LINE_THICKNESS = 2
-SPACE_BEFORE_LINE = 15
-SPACE_AFTER_LINE = 15
+GAP_BETWEEN_TITLE_AND_TEXT = 15  # Расстояние между заголовком и текстом
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -153,7 +151,7 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
     
     return noisy_image
 
-# ========== ГЕНЕРАЦИЯ СТОРИС (НОВАЯ СТРУКТУРА) ==========
+# ========== ГЕНЕРАЦИЯ СТОРИС ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"🖼 Генерация сторис:")
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
@@ -276,23 +274,13 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_end_y = current_y + title_total_h
         
         # ============================================================
-        # ШАГ 5: РИСУЕМ РАЗДЕЛИТЕЛЬ С ОТСТУПАМИ
+        # ШАГ 5: ОТСТУП МЕЖДУ ЗАГОЛОВКОМ И ТЕКСТОМ (15px)
         # ============================================================
-        # Отступ от заголовка до линии
-        line_y = title_end_y + SPACE_BEFORE_LINE
-        
-        # Рисуем линию
-        LINE_X1 = SIDE_MARGIN
-        LINE_X2 = W - SIDE_MARGIN
-        draw.rectangle([LINE_X1, line_y, LINE_X2, line_y + LINE_THICKNESS], fill='white')
-        
-        # Отступ от линии до текста
-        current_y = line_y + LINE_THICKNESS + SPACE_AFTER_LINE
+        current_y = title_end_y + GAP_BETWEEN_TITLE_AND_TEXT
         
         logging.info(f"📐 Позиции:")
         logging.info(f"   Конец заголовка: {title_end_y}")
-        logging.info(f"   Линия: {line_y}")
-        logging.info(f"   Начало текста: {current_y}")
+        logging.info(f"   Начало текста: {current_y} (отступ {GAP_BETWEEN_TITLE_AND_TEXT}px)")
     
     # ============================================================
     # ШАГ 6: РИСУЕМ ОСНОВНОЙ ТЕКСТ
