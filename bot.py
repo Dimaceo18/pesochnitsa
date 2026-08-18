@@ -46,35 +46,25 @@ def parse_text(text: str) -> tuple:
     # ПЕРВЫЙ АБЗАЦ - это заголовок
     title = paragraphs[0]
     
-    # ВСЁ ОСТАЛЬНОЕ - основной текст (включая второй, третий абзацы и т.д.)
+    # ВСЁ ОСТАЛЬНОЕ - основной текст
     content = "\n\n".join(paragraphs[1:]) if len(paragraphs) > 1 else ""
     
     # Если заголовок длиннее 150 символов - обрезаем по последней точке
     if len(title) > 150:
-        # Ищем последнюю точку, вопросительный или восклицательный знак в пределах 150 символов
-        cut_pos = 150
-        # Ищем последний разделитель в пределах 150 символов
-        last_dot = title.rfind('.', 0, cut_pos)
-        last_q = title.rfind('?', 0, cut_pos)
-        last_excl = title.rfind('!', 0, cut_pos)
-        
-        # Берем самый дальний разделитель
+        last_dot = title.rfind('.', 0, 150)
+        last_q = title.rfind('?', 0, 150)
+        last_excl = title.rfind('!', 0, 150)
         cut_pos = max(last_dot, last_q, last_excl)
         
         if cut_pos > 0:
-            # Обрезаем заголовок
             remaining = title[cut_pos+1:].strip()
             title = title[:cut_pos+1].strip()
-            # Добавляем остаток к основному тексту
             if remaining:
                 content = remaining + "\n\n" + content if content else remaining
         else:
-            # Если нет разделителя, просто обрезаем
             title = title[:150] + "..."
     
-    # ЛОГИРУЕМ РЕЗУЛЬТАТ
     logging.info(f"📝 Парсинг текста:")
-    logging.info(f"   Всего абзацев: {len(paragraphs)}")
     logging.info(f"   Заголовок ({len(title)} симв): {title[:100]}...")
     logging.info(f"   Контент ({len(content)} симв): {content[:100] if content else 'ПУСТО'}...")
     
@@ -88,8 +78,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
-    # 1. БЕЛЫЙ ФОН
-    canvas = Image.new('RGB', (W, H), color='white')
+    # 1. ЧЕРНЫЙ ФОН
+    canvas = Image.new('RGB', (W, H), color='black')
     draw = ImageDraw.Draw(canvas)
     
     # 2. ФОТО НА ВСЮ ШИРИНУ
@@ -106,8 +96,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     photo = photo.resize((PHOTO_WIDTH, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
     
+    # Обводка снизу (8px) - теперь БЕЛАЯ (видна на черном фоне)
     border_size = 8
-    bordered_photo = Image.new('RGB', (PHOTO_WIDTH, PHOTO_HEIGHT + border_size), color='black')
+    bordered_photo = Image.new('RGB', (PHOTO_WIDTH, PHOTO_HEIGHT + border_size), color='white')
     bordered_photo.paste(photo, (0, 0))
     
     PHOTO_Y = 0
@@ -126,11 +117,12 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         font_reg = ImageFont.load_default()
         logging.warning(f"Шрифт {FONT_PATH_REG} не найден")
     
-    # 4. ЗАГОЛОВОК (по центру)
+    # 4. ЗАГОЛОВОК (по левому краю, белый)
+    SIDE_MARGIN = 40  # Отступ слева
     title_y_position = PHOTO_HEIGHT + border_size + 25
     
     if title:
-        MAX_TITLE_WIDTH = W - 80
+        MAX_TITLE_WIDTH = W - (SIDE_MARGIN * 2)
         
         def fit_title(text, max_width):
             for size in range(70, 36, -2):
@@ -189,21 +181,19 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_text = "\n".join(title_lines)
         
         title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
-        title_w = title_bbox[2] - title_bbox[0]
         title_h = title_bbox[3] - title_bbox[1]
         
-        title_x = (W - title_w) // 2
+        title_x = SIDE_MARGIN  # По левому краю
         title_y = title_y_position
         
-        draw.text((title_x, title_y), title_text, font=title_font, fill='black')
+        draw.text((title_x, title_y), title_text, font=title_font, fill='white')
         
         title_y_position = title_y + title_h + 8
     
-    # 5. ОСНОВНОЙ ТЕКСТ (по левому краю с отступами)
+    # 5. ОСНОВНОЙ ТЕКСТ (по левому краю, белый, на одном уровне с заголовком)
     if content:
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
-        SIDE_MARGIN = 40
         MAX_TEXT_W = W - (SIDE_MARGIN * 2)
         MAX_TEXT_H = H - title_y_position - 100
         
@@ -251,20 +241,21 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         content_font, wrapped_paragraphs = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
         
+        # Начинаем с отступа после заголовка
         start_y = title_y_position + 5
         
         current_y = start_y
         for para_lines in wrapped_paragraphs:
             for line in para_lines:
                 bbox = draw.textbbox((0, 0), line, font=content_font)
-                line_width = bbox[2] - bbox[0]
                 line_height = bbox[3] - bbox[1]
                 
+                # Текст ПО ЛЕВОМУ КРАЮ с отступом SIDE_MARGIN
                 line_x = SIDE_MARGIN
-                draw.text((line_x, current_y), line, font=content_font, fill='#333333')
+                draw.text((line_x, current_y), line, font=content_font, fill='white')
                 current_y += line_height
             
-            current_y += 12
+            current_y += 12  # Отступ между абзацами
         
         logging.info(f"✅ Основной текст нарисован")
     else:
@@ -377,7 +368,6 @@ async def handle_forward(message: types.Message):
     
     title, content = parse_text(text)
     
-    # Если заголовок пустой - берем первое предложение
     if not title and text:
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         title = sentences[0]
