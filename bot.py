@@ -26,10 +26,10 @@ W, H = 1080, 1920
 
 # ОТСТУПЫ (ЖЕСТКО ФИКСИРОВАННЫЕ)
 SIDE_MARGIN = 40
-PHOTO_HEIGHT = 500  # ФИКСИРОВАННАЯ ВЫСОТА ФОТО
+PHOTO_HEIGHT = 500
 BORDER_SIZE = 8
-GAP_AFTER_PHOTO = 20  # Отступ от фото до заголовка
-GAP_AFTER_TITLE = 25   # Отступ ПОСЛЕ ВСЕГО ЗАГОЛОВКА (не после строки)
+GAP_AFTER_PHOTO = 20
+GAP_AFTER_TITLE = 30  # УВЕЛИЧИЛ ДО 30px, ЧТОБЫ ТОЧНО БЫЛО ВИДНО
 GRAY_BLOCK_H = 60
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
@@ -176,11 +176,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw = ImageDraw.Draw(canvas)
     
     # ============================================================
-    # ШАГ 2: ВСТАВЛЯЕМ ФОТО (ФИКСИРОВАННАЯ ВЫСОТА 500px)
+    # ШАГ 2: ВСТАВЛЯЕМ ФОТО
     # ============================================================
     photo = Image.open(photo_path).convert("RGB")
     
-    # Обрезаем и масштабируем фото до 1080x500
     photo_ratio = photo.width / photo.height
     target_ratio = W / PHOTO_HEIGHT
     
@@ -199,10 +198,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     photo = apply_retro_effect(photo)
     
-    # Обводка снизу
     bordered_photo = Image.new('RGB', (W, PHOTO_HEIGHT + BORDER_SIZE), color='white')
     bordered_photo.paste(photo, (0, 0))
-    
     canvas.paste(bordered_photo, (0, 0))
     
     # ============================================================
@@ -221,9 +218,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # ============================================================
     # ШАГ 4: РИСУЕМ ЗАГОЛОВОК
     # ============================================================
-    # Фото заканчивается на: PHOTO_HEIGHT + BORDER_SIZE = 500 + 8 = 508
-    # Отступ после фото: 20px
-    title_y = PHOTO_HEIGHT + BORDER_SIZE + GAP_AFTER_PHOTO  # 500 + 8 + 20 = 528
+    title_y = PHOTO_HEIGHT + BORDER_SIZE + GAP_AFTER_PHOTO
     
     if title:
         MAX_TITLE_WIDTH = W - (SIDE_MARGIN * 2)
@@ -252,7 +247,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             if current_line:
                 lines.append(' '.join(current_line))
             
-            # ПОДХОДИТ ЛЮБОЕ КОЛИЧЕСТВО СТРОК (1-3)
             if 1 <= len(lines) <= 3:
                 title_font = font
                 title_lines = lines
@@ -283,20 +277,20 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         # Рисуем заголовок
         draw.text((SIDE_MARGIN, title_y), title_text, font=title_font, fill='white')
         
-        # Вычисляем КОНЕЦ ВСЕГО ЗАГОЛОВКА (последняя строка)
-        single_bbox = draw.textbbox((0, 0), "A", font=title_font)
-        single_h = single_bbox[3] - single_bbox[1]
-        title_total_h = len(title_lines) * single_h + 6 * (len(title_lines) - 1)
+        # ===== ТОЧНОЕ ВЫЧИСЛЕНИЕ ВЫСОТЫ ВСЕГО ЗАГОЛОВКА =====
+        # Используем textbbox для всего текста сразу
+        title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+        title_total_h = title_bbox[3] - title_bbox[1]
         title_end_y = title_y + title_total_h
         
         # ============================================================
-        # ШАГ 5: ОТСТУП ПОСЛЕ ВСЕГО ЗАГОЛОВКА (25px)
+        # ШАГ 5: ОТСТУП 30px ПОСЛЕ ВСЕГО ЗАГОЛОВКА
         # ============================================================
         text_y = title_end_y + GAP_AFTER_TITLE
         
         logging.info(f"📐 Позиции:")
         logging.info(f"   Фото: 0 - {PHOTO_HEIGHT + BORDER_SIZE}")
-        logging.info(f"   Заголовок: {title_y} - {title_end_y} ({len(title_lines)} строк)")
+        logging.info(f"   Заголовок: {title_y} - {title_end_y} ({len(title_lines)} строк, высота {title_total_h}px)")
         logging.info(f"   Начало текста: {text_y} (отступ {GAP_AFTER_TITLE}px)")
     
     # ============================================================
@@ -312,7 +306,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         MAX_TEXT_H = H - text_y - GRAY_BLOCK_H - 20
         CONTENT_LINE_SPACING = 5
         
-        # Подбираем размер шрифта
         content_font = None
         wrapped_paragraphs = []
         single_h = 0
@@ -359,7 +352,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                     wrapped = [para]
                 wrapped_paragraphs.append(wrapped)
         
-        # Рисуем текст
         pos_y = text_y
         for para_lines in wrapped_paragraphs:
             for line in para_lines:
@@ -375,7 +367,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     # ШАГ 7: РИСУЕМ НИЖНИЙ БЛОК
     # ============================================================
     GRAY_BLOCK_Y = H - GRAY_BLOCK_H
-    
     draw.rectangle([0, GRAY_BLOCK_Y, W, H], fill='#2A2A2A')
     
     try:
@@ -390,7 +381,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     footer_x = (W - footer_w) // 2
     footer_y = GRAY_BLOCK_Y + (GRAY_BLOCK_H - footer_h) // 2
-    
     draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='white')
     
     # ============================================================
@@ -455,7 +445,6 @@ async def handle_forward(message: types.Message):
         await message.answer("❌ В репосте нет фото!")
         return
     
-    # Очищаем текст
     text = text.replace("**Текст отсутствует**", "").strip()
     lines = text.split('\n')
     clean_lines = []
