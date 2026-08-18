@@ -24,12 +24,12 @@ BACKGROUND_IMAGE = "fon.png"
 # Размеры сторис
 W, H = 1080, 1920
 
-# ОТСТУПЫ (ЖЕСТКО ФИКСИРОВАННЫЕ)
+# ОТСТУПЫ
 SIDE_MARGIN = 40
 PHOTO_HEIGHT = 500
 BORDER_SIZE = 8
 GAP_AFTER_PHOTO = 20
-GAP_AFTER_TITLE = 30  # УВЕЛИЧИЛ ДО 30px, ЧТОБЫ ТОЧНО БЫЛО ВИДНО
+GAP_AFTER_TITLE = 30
 GRAY_BLOCK_H = 60
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
@@ -47,6 +47,7 @@ def parse_text(text: str) -> tuple:
     
     text = text.strip()
     
+    # Разбиваем на абзацы по ДВОЙНОМУ переводу строки
     paragraphs = re.split(r'\n\s*\n', text)
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
     
@@ -54,12 +55,13 @@ def parse_text(text: str) -> tuple:
         title = paragraphs[0]
         content = "\n\n".join(paragraphs[1:])
     else:
+        # Если нет двойного перевода, пробуем по одинарному
         lines = text.split('\n')
         lines = [l.strip() for l in lines if l.strip()]
         
         if len(lines) > 1:
             title = lines[0]
-            content = '\n'.join(lines[1:])
+            content = '\n\n'.join(lines[1:])  # Сохраняем как абзацы
         else:
             match = re.search(r'\.\s+([А-ЯA-Z])', text)
             if match:
@@ -92,25 +94,18 @@ def parse_text(text: str) -> tuple:
     
     return title, content
 
-# ========== ФОРМАТИРОВАНИЕ ТЕКСТА В АБЗАЦЫ ==========
+# ========== ФОРМАТИРОВАНИЕ ТЕКСТА В АБЗАЦЫ С СОХРАНЕНИЕМ СТРУКТУРЫ ==========
 def format_paragraphs(text: str) -> list:
+    """
+    Разбивает текст на абзацы, сохраняя оригинальную структуру.
+    Каждый абзац - отдельный элемент списка.
+    """
     if not text:
         return []
     
-    sentences = re.split(r'(?<=[.!?])\s+(?=[А-ЯA-Z])', text)
-    sentences = [s.strip() for s in sentences if s.strip()]
-    
-    paragraphs = []
-    current_para = []
-    
-    for sent in sentences:
-        current_para.append(sent)
-        if len(current_para) >= 3:
-            paragraphs.append(". ".join(current_para))
-            current_para = []
-    
-    if current_para:
-        paragraphs.append(". ".join(current_para))
+    # Разбиваем по двойному переводу строки
+    paragraphs = text.split('\n\n')
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
     
     return paragraphs
 
@@ -223,7 +218,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     if title:
         MAX_TITLE_WIDTH = W - (SIDE_MARGIN * 2)
         
-        # Подбираем размер шрифта
         title_font = None
         title_lines = []
         for size in range(70, 36, -2):
@@ -274,37 +268,36 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         title_text = "\n".join(title_lines)
         
-        # Рисуем заголовок
         draw.text((SIDE_MARGIN, title_y), title_text, font=title_font, fill='white')
         
-        # ===== ТОЧНОЕ ВЫЧИСЛЕНИЕ ВЫСОТЫ ВСЕГО ЗАГОЛОВКА =====
-        # Используем textbbox для всего текста сразу
         title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
         title_total_h = title_bbox[3] - title_bbox[1]
         title_end_y = title_y + title_total_h
         
-        # ============================================================
-        # ШАГ 5: ОТСТУП 30px ПОСЛЕ ВСЕГО ЗАГОЛОВКА
-        # ============================================================
         text_y = title_end_y + GAP_AFTER_TITLE
         
         logging.info(f"📐 Позиции:")
-        logging.info(f"   Фото: 0 - {PHOTO_HEIGHT + BORDER_SIZE}")
-        logging.info(f"   Заголовок: {title_y} - {title_end_y} ({len(title_lines)} строк, высота {title_total_h}px)")
-        logging.info(f"   Начало текста: {text_y} (отступ {GAP_AFTER_TITLE}px)")
+        logging.info(f"   Заголовок: {title_y} - {title_end_y} ({len(title_lines)} строк)")
+        logging.info(f"   Начало текста: {text_y}")
     
     # ============================================================
-    # ШАГ 6: РИСУЕМ ОСНОВНОЙ ТЕКСТ
+    # ШАГ 5: РИСУЕМ ОСНОВНОЙ ТЕКСТ С АБЗАЦАМИ
     # ============================================================
     if content and content != "Текст отсутствует":
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
+        # Получаем абзацы с сохранением структуры
         paragraphs = format_paragraphs(content)
-        logging.info(f"   Разбито на {len(paragraphs)} абзацев")
+        logging.info(f"   Найдено {len(paragraphs)} абзацев")
         
         MAX_TEXT_W = W - (SIDE_MARGIN * 2)
         MAX_TEXT_H = H - text_y - GRAY_BLOCK_H - 20
-        CONTENT_LINE_SPACING = 5
+        
+        # УВЕЛИЧЕННОЕ МЕЖСТРОЧНОЕ РАССТОЯНИЕ
+        CONTENT_LINE_SPACING = 10  # Было 5, теперь 10
+        
+        # ОТСТУП ПЕРВОЙ СТРОКИ АБЗАЦА (КРАСНАЯ СТРОКА)
+        FIRST_LINE_INDENT = 30
         
         content_font = None
         wrapped_paragraphs = []
@@ -322,15 +315,17 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             single_h = single_bbox[3] - single_bbox[1]
             
             for para in paragraphs:
+                # Разбиваем абзац на строки
                 chars_per_line = int(MAX_TEXT_W / (size * 0.6))
                 wrapped = textwrap.wrap(para, width=chars_per_line)
                 if not wrapped:
                     wrapped = [para]
                 test_wrapped.append(wrapped)
                 
+                # Считаем высоту абзаца с учетом межстрочного расстояния
                 para_height = len(wrapped) * single_h + CONTENT_LINE_SPACING * (len(wrapped) - 1)
                 total_height += para_height
-                total_height += 15
+                total_height += 20  # Отступ между абзацами (увеличен)
             
             if total_height <= MAX_TEXT_H:
                 content_font = font
@@ -352,19 +347,31 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                     wrapped = [para]
                 wrapped_paragraphs.append(wrapped)
         
+        # РИСУЕМ ТЕКСТ С АБЗАЦАМИ
         pos_y = text_y
-        for para_lines in wrapped_paragraphs:
-            for line in para_lines:
-                draw.text((SIDE_MARGIN, pos_y), line, font=content_font, fill='white')
-                pos_y += single_h + CONTENT_LINE_SPACING
-            pos_y += 15
         
-        logging.info(f"✅ Основной текст нарисован")
+        for para_idx, para_lines in enumerate(wrapped_paragraphs):
+            for line_idx, line in enumerate(para_lines):
+                # ДЛЯ ПЕРВОЙ СТРОКИ АБЗАЦА - ДЕЛАЕМ ОТСТУП (КРАСНАЯ СТРОКА)
+                if line_idx == 0:
+                    line_x = SIDE_MARGIN + FIRST_LINE_INDENT
+                else:
+                    line_x = SIDE_MARGIN
+                
+                draw.text((line_x, pos_y), line, font=content_font, fill='white')
+                pos_y += single_h + CONTENT_LINE_SPACING
+            
+            # Отступ между абзацами (пустая строка)
+            pos_y += 20
+            
+            logging.info(f"   Абзац {para_idx + 1} нарисован")
+        
+        logging.info(f"✅ Основной текст нарисован, межстрочный интервал: {CONTENT_LINE_SPACING}px")
     else:
         logging.warning(f"⚠️ Основной текст ПУСТОЙ")
     
     # ============================================================
-    # ШАГ 7: РИСУЕМ НИЖНИЙ БЛОК
+    # ШАГ 6: РИСУЕМ НИЖНИЙ БЛОК
     # ============================================================
     GRAY_BLOCK_Y = H - GRAY_BLOCK_H
     draw.rectangle([0, GRAY_BLOCK_Y, W, H], fill='#2A2A2A')
@@ -384,7 +391,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='white')
     
     # ============================================================
-    # ШАГ 8: СОХРАНЯЕМ
+    # ШАГ 7: СОХРАНЯЕМ
     # ============================================================
     output_path = "output_story.png"
     canvas.save(output_path, "PNG")
@@ -416,7 +423,8 @@ user_data = {}
 async def start(message: types.Message):
     await message.answer(
         "📱 Привет! Я делаю ретро-сторис!\n\n"
-        "Просто отправь мне РЕПОСТ любого поста с фото и текстом."
+        "Просто отправь мне РЕПОСТ любого поста с фото и текстом.\n"
+        "Я сохраню абзацы и сделаю красную строку!"
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
 
