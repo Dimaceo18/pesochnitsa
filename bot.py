@@ -13,9 +13,9 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
-# Шрифты Inter
-FONT_PATH_BOLD = "Inter-Bold.ttf"
-FONT_PATH_REG = "Inter-Black.ttf"
+# Шрифты Inter (один и тот же шрифт, но разные начертания)
+FONT_PATH_BOLD = "Inter-Bold.ttf"      # Жирный для заголовка
+FONT_PATH_REG = "Inter-Regular.ttf"    # Обычный для текста
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -29,12 +29,10 @@ dp.middleware.setup(LoggingMiddleware())
 def parse_text(text: str) -> tuple:
     """
     Разделяет текст на заголовок (первый абзац) и основной текст (всё остальное).
-    Заголовок - текст до первой пустой строки или до первого перевода строки.
     """
     if not text:
         return "", ""
     
-    # Убираем лишние пробелы в начале и конце
     text = text.strip()
     
     # Разбиваем на абзацы (по двойному переводу строки)
@@ -47,29 +45,21 @@ def parse_text(text: str) -> tuple:
     # Первый абзац - заголовок
     title = paragraphs[0]
     
-    # Все остальные абзацы - основной текст
+    # Все остальные абзацы - основной текст (сохраняем структуру)
     content = "\n\n".join(paragraphs[1:]) if len(paragraphs) > 1 else ""
     
-    # Если заголовок слишком длинный (> 200 символов), обрезаем до первого предложения
-    if len(title) > 200:
-        # Ищем первую точку с пробелом, вопросительный или восклицательный знак
+    # Если заголовок слишком длинный (> 150 символов), обрезаем
+    if len(title) > 150:
         match = re.search(r'[.!?]\s+', title)
         if match:
             title = title[:match.end()].strip()
-            # Остаток от заголовка добавляем к основному тексту
             remaining = title[match.end():].strip()
             if remaining:
                 content = remaining + "\n\n" + content if content else remaining
     
-    # Если заголовок пустой, берем первые 2 предложения
-    if not title:
-        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-        title = ". ".join(sentences[:2])
-        content = ". ".join(sentences[2:])
-    
     return title, content
 
-# ========== ГЕНЕРАЦИЯ СТОРИС (НОВЫЙ ДИЗАЙН) ==========
+# ========== ГЕНЕРАЦИЯ СТОРИС ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
     W, H = 1080, 1920  # 9:16
     
@@ -95,24 +85,39 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     canvas.paste(bordered_photo, (PHOTO_X - border_size, PHOTO_Y - border_size))
     
-    # 3. ЗАГОЛОВОК (большими буквами, максимум 3 строки)
+    # 3. ЗАГРУЗКА ШРИФТОВ
+    try:
+        font_bold = ImageFont.truetype(FONT_PATH_BOLD, 60)
+    except:
+        font_bold = ImageFont.load_default()
+        logging.warning(f"Шрифт {FONT_PATH_BOLD} не найден, использую дефолтный")
+    
+    try:
+        font_reg = ImageFont.truetype(FONT_PATH_REG, 40)
+    except:
+        font_reg = ImageFont.load_default()
+        logging.warning(f"Шрифт {FONT_PATH_REG} не найден, использую дефолтный")
+    
+    # 4. ЗАГОЛОВОК (жирный, ВСЕ БОЛЬШИЕ БУКВЫ, 2-3 строки)
     if title:
         MAX_TITLE_WIDTH = W - 80
         
         def fit_title(text, max_width):
-            for size in range(80, 30, -2):
+            # Пробуем размер от 70 до 36
+            for size in range(70, 36, -2):
                 try:
                     font = ImageFont.truetype(FONT_PATH_BOLD, size)
                 except:
                     font = ImageFont.load_default()
                 
-                words = text.split()
+                # Разбиваем на строки по словам
+                words = text.upper().split()
                 lines = []
                 current_line = []
                 
                 for word in words:
                     test_line = ' '.join(current_line + [word])
-                    bbox = draw.textbbox((0, 0), test_line.upper(), font=font)
+                    bbox = draw.textbbox((0, 0), test_line, font=font)
                     line_width = bbox[2] - bbox[0]
                     
                     if line_width <= max_width:
@@ -125,6 +130,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 if current_line:
                     lines.append(' '.join(current_line))
                 
+                # Проверяем количество строк
                 if 2 <= len(lines) <= 3:
                     return font, lines
                 if len(lines) > 3:
@@ -132,16 +138,17 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 if len(lines) <= 2:
                     return font, lines
             
+            # Если ничего не подошло
             try:
                 font = ImageFont.truetype(FONT_PATH_BOLD, 36)
             except:
                 font = ImageFont.load_default()
-            words = text.split()
+            words = text.upper().split()
             lines = []
             current_line = []
             for word in words:
                 test_line = ' '.join(current_line + [word])
-                bbox = draw.textbbox((0, 0), test_line.upper(), font=font)
+                bbox = draw.textbbox((0, 0), test_line, font=font)
                 if bbox[2] - bbox[0] <= max_width:
                     current_line.append(word)
                 else:
@@ -153,7 +160,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             return font, lines
         
         title_font, title_lines = fit_title(title, MAX_TITLE_WIDTH)
-        title_text = "\n".join([line.upper() for line in title_lines])
+        title_text = "\n".join(title_lines)  # Уже в верхнем регистре
         
         title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
         title_w = title_bbox[2] - title_bbox[0]
@@ -164,50 +171,93 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='black')
         
-        # 4. ОСНОВНОЙ ТЕКСТ
+        # 5. ОСНОВНОЙ ТЕКСТ (обычный шрифт, с сохранением абзацев)
         if content:
-            TEXT_START_Y = title_y + title_h + 20
+            TEXT_START_Y = title_y + title_h + 25
             MAX_TEXT_H = H - TEXT_START_Y - 100
             MAX_TEXT_W = W - 80
             
             def fit_content(text, max_w, max_h):
-                for size in range(44, 20, -2):
+                # Пробуем размер от 40 до 22
+                for size in range(40, 22, -2):
                     try:
                         font = ImageFont.truetype(FONT_PATH_REG, size)
                     except:
                         font = ImageFont.load_default()
                     
-                    chars_per_line = int(max_w / (size * 0.6))
-                    wrapped = textwrap.wrap(text, width=chars_per_line)
-                    test_text = "\n".join(wrapped)
-                    bbox = draw.textbbox((0, 0), test_text, font=font)
-                    th = bbox[3] - bbox[1]
-                    tw = bbox[2] - bbox[0]
+                    # Разбиваем на абзацы
+                    paragraphs = text.split('\n\n')
+                    wrapped_paragraphs = []
+                    total_height = 0
                     
-                    if th <= max_h and tw <= max_w:
-                        return font, wrapped
+                    for para in paragraphs:
+                        # Разбиваем абзац на строки
+                        chars_per_line = int(max_w / (size * 0.6))
+                        wrapped = textwrap.wrap(para, width=chars_per_line)
+                        if not wrapped:
+                            wrapped = [para]
+                        wrapped_paragraphs.append(wrapped)
+                        
+                        # Считаем высоту
+                        for line in wrapped:
+                            bbox = draw.textbbox((0, 0), line, font=font)
+                            total_height += bbox[3] - bbox[1]
+                        # Добавляем отступ между абзацами
+                        if len(paragraphs) > 1:
+                            total_height += 15
+                    
+                    if total_height <= max_h:
+                        return font, wrapped_paragraphs
                 
+                # Если ничего не подошло
                 try:
-                    font = ImageFont.truetype(FONT_PATH_REG, 20)
+                    font = ImageFont.truetype(FONT_PATH_REG, 22)
                 except:
                     font = ImageFont.load_default()
-                chars_per_line = int(max_w / (20 * 0.6))
-                wrapped = textwrap.wrap(text, width=chars_per_line)
-                return font, wrapped
+                paragraphs = text.split('\n\n')
+                wrapped_paragraphs = []
+                for para in paragraphs:
+                    chars_per_line = int(max_w / (22 * 0.6))
+                    wrapped = textwrap.wrap(para, width=chars_per_line)
+                    if not wrapped:
+                        wrapped = [para]
+                    wrapped_paragraphs.append(wrapped)
+                return font, wrapped_paragraphs
             
-            content_font, wrapped_content = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
-            final_text = "\n".join(wrapped_content)
+            content_font, wrapped_paragraphs = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
             
-            bbox = draw.textbbox((0, 0), final_text, font=content_font)
-            th = bbox[3] - bbox[1]
-            tw = bbox[2] - bbox[0]
+            # Рисуем текст с сохранением абзацев
+            current_y = TEXT_START_Y
+            total_height = 0
             
-            text_x = (W - tw) // 2
-            text_y = TEXT_START_Y + (MAX_TEXT_H - th) // 2
+            # Сначала считаем общую высоту для центрирования
+            for para_idx, para_lines in enumerate(wrapped_paragraphs):
+                for line in para_lines:
+                    bbox = draw.textbbox((0, 0), line, font=content_font)
+                    total_height += bbox[3] - bbox[1]
+                if para_idx < len(wrapped_paragraphs) - 1:
+                    total_height += 15  # Отступ между абзацами
             
-            draw.text((text_x, text_y), final_text, font=content_font, fill='#333333')
+            # Центрируем текст по вертикали
+            start_y = TEXT_START_Y + (MAX_TEXT_H - total_height) // 2
+            
+            # Рисуем
+            current_y = start_y
+            for para_idx, para_lines in enumerate(wrapped_paragraphs):
+                for line in para_lines:
+                    bbox = draw.textbbox((0, 0), line, font=content_font)
+                    line_width = bbox[2] - bbox[0]
+                    line_height = bbox[3] - bbox[1]
+                    
+                    line_x = (W - line_width) // 2
+                    draw.text((line_x, current_y), line, font=content_font, fill='#333333')
+                    current_y += line_height
+                
+                # Отступ между абзацами
+                if para_idx < len(wrapped_paragraphs) - 1:
+                    current_y += 15
     
-    # 5. ЖЕЛТЫЙ ПРЯМОУГОЛЬНИК ВНИЗУ
+    # 6. ЖЕЛТЫЙ ПРЯМОУГОЛЬНИК ВНИЗУ
     YELLOW_BLOCK_H = 60
     YELLOW_BLOCK_Y = H - YELLOW_BLOCK_H
     
@@ -262,8 +312,8 @@ async def start(message: types.Message):
         "📱 Привет! Я делаю сторис в белом стиле!\n\n"
         "Просто отправь мне РЕПОСТ любого поста из Telegram, и я:\n"
         "1️⃣ Возьму фото и сделаю его квадратом с черной обводкой\n"
-        "2️⃣ Первый абзац сделаю заголовком большими буквами\n"
-        "3️⃣ Остальной текст размещу ниже\n"
+        "2️⃣ Первый абзац сделаю заголовком (жирный, ВСЕ БОЛЬШИЕ)\n"
+        "3️⃣ Остальной текст сохраню с абзацами\n"
         "4️⃣ Добавлю желтый блок внизу\n\n"
         "Или отправь данные вручную:\n"
         "1. ФОТО\n"
@@ -300,9 +350,8 @@ async def handle_forward(message: types.Message):
         await message.answer("❌ В репосте нет фото! Пожалуйста, отправь репост с изображением.")
         return
     
-    # Удаляем мусорные строки
+    # Очищаем текст
     text = text.replace("**Текст отсутствует**", "").strip()
-    # Удаляем строки с "Подписаться" и подобные
     lines = text.split('\n')
     clean_lines = []
     for line in lines:
@@ -314,7 +363,6 @@ async def handle_forward(message: types.Message):
     title, content = parse_text(text)
     
     if not title and text:
-        # Если не удалось определить абзацы, берем первые 2 предложения
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         title = ". ".join(sentences[:2])
         content = ". ".join(sentences[2:])
@@ -324,9 +372,7 @@ async def handle_forward(message: types.Message):
     if not content:
         content = "Текст отсутствует"
     
-    # Ограничиваем заголовок до 150 символов
     if len(title) > 150:
-        # Обрезаем по последней точке
         last_dot = title.rfind('.', 0, 150)
         if last_dot > 0:
             content = title[last_dot+1:].strip() + "\n\n" + content if content else title[last_dot+1:].strip()
@@ -414,7 +460,7 @@ if __name__ == "__main__":
     import asyncio
     from aiogram import executor
     
-    print("🚀 Бот запускается в новом белом дизайне...")
+    print("🚀 Бот запускается...")
     
     async def delete_webhook():
         await bot.delete_webhook()
