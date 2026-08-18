@@ -123,31 +123,28 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
     Применяет усиленный ретро-эффект к изображению: шум, зерно, винтажный оттенок
     +20% к интенсивности
     """
-    # Конвертируем в RGB если нужно
     if image.mode != 'RGB':
         image = image.convert('RGB')
     
-    # 1. Уменьшаем контрастность для винтажного вида (сильнее)
+    # 1. Уменьшаем контрастность
     enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(0.75)  # Было 0.85, теперь 0.75
+    image = enhancer.enhance(0.75)
     
-    # 2. Добавляем теплый оттенок (сепия) - сильнее
+    # 2. Добавляем теплый оттенок (сепия)
     width, height = image.size
     sepia_overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     sepia_draw = ImageDraw.Draw(sepia_overlay)
     
-    # Накладываем более насыщенный коричневато-оранжевый оттенок
-    sepia_draw.rectangle([(0, 0), (width, height)], fill=(180, 130, 80, 40))  # Было 25, стало 40
+    sepia_draw.rectangle([(0, 0), (width, height)], fill=(180, 130, 80, 40))
     image = image.convert('RGBA')
     image = Image.alpha_composite(image, sepia_overlay)
     image = image.convert('RGB')
     
-    # 3. Добавляем шум (зернистость) - сильнее
+    # 3. Добавляем шум (зернистость)
     pixel_data = list(image.getdata())
     width, height = image.size
     
-    # Увеличиваем интенсивность шума
-    noise_intensity = 22  # Было 15, стало 22
+    noise_intensity = 22
     noisy_pixels = []
     
     for pixel in pixel_data:
@@ -165,12 +162,12 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
     noisy_image = Image.new('RGB', (width, height))
     noisy_image.putdata(noisy_pixels)
     
-    # 4. Добавляем размытие для эффекта старой пленки (чуть сильнее)
-    noisy_image = noisy_image.filter(ImageFilter.GaussianBlur(radius=0.8))  # Было 0.5, стало 0.8
+    # 4. Добавляем размытие
+    noisy_image = noisy_image.filter(ImageFilter.GaussianBlur(radius=0.8))
     
-    # 5. Немного увеличиваем яркость
+    # 5. Увеличиваем яркость
     enhancer = ImageEnhance.Brightness(noisy_image)
-    noisy_image = enhancer.enhance(1.1)  # Было 1.05, стало 1.1
+    noisy_image = enhancer.enhance(1.1)
     
     return noisy_image
 
@@ -199,8 +196,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         photo = photo.crop((0, 0, photo.width, int(photo.width / (PHOTO_WIDTH / PHOTO_HEIGHT))))
     
     photo = photo.resize((PHOTO_WIDTH, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
-    
-    # ПРИМЕНЯЕМ УСИЛЕННЫЙ РЕТРО-ЭФФЕКТ
     photo = apply_retro_effect(photo)
     
     border_size = 8
@@ -297,13 +292,15 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         single_h = single_bbox[3] - single_bbox[1]
         title_total_h = len(title_lines) * single_h + TITLE_LINE_SPACING * (len(title_lines) - 1)
         
-        # Позиция после заголовка с отступом
-        title_y_position = title_y + title_total_h + 25
-    
-    # 5. РАЗДЕЛИТЕЛЬ (с отступами сверху и снизу)
-    if title:
-        # Отступ сверху от заголовка уже сделан (25px)
-        LINE_Y = title_y_position
+        # СОХРАНЯЕМ ПОЗИЦИЮ КОНЦА ЗАГОЛОВКА
+        title_end_y = title_y + title_total_h
+        
+        # ===== РАЗДЕЛИТЕЛЬ =====
+        # Отступ после заголовка (большой, чтобы не налезало)
+        SEPARATOR_OFFSET = 30  # Отступ от заголовка до линии
+        
+        # Позиция линии разделителя
+        LINE_Y = title_end_y + SEPARATOR_OFFSET
         LINE_WIDTH = W - (SIDE_MARGIN * 2)
         LINE_X1 = SIDE_MARGIN
         LINE_X2 = SIDE_MARGIN + LINE_WIDTH
@@ -312,10 +309,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         # Рисуем тонкую белую линию
         draw.rectangle([LINE_X1, LINE_Y, LINE_X2, LINE_Y + LINE_HEIGHT], fill='white')
         
-        # Отступ после разделителя (25px)
-        title_y_position = LINE_Y + LINE_HEIGHT + 25
+        # Отступ после разделителя (перед текстом)
+        TEXT_OFFSET = 30
+        title_y_position = LINE_Y + LINE_HEIGHT + TEXT_OFFSET
     
-    # 6. ОСНОВНОЙ ТЕКСТ
+    # 5. ОСНОВНОЙ ТЕКСТ
     if content and content != "Текст отсутствует":
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
@@ -387,11 +385,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     else:
         logging.warning(f"⚠️ Основной текст ПУСТОЙ или равен 'Текст отсутствует'")
     
-    # 7. ТЕМНО-СЕРЫЙ БЛОК ВНИЗУ (вместо желтого)
+    # 6. ТЕМНО-СЕРЫЙ БЛОК ВНИЗУ
     GRAY_BLOCK_H = 60
     GRAY_BLOCK_Y = H - GRAY_BLOCK_H
     
-    draw.rectangle([0, GRAY_BLOCK_Y, W, H], fill='#2A2A2A')  # Темно-серый
+    draw.rectangle([0, GRAY_BLOCK_Y, W, H], fill='#2A2A2A')
     
     try:
         footer_font = ImageFont.truetype(FONT_PATH_BOLD, 28)
@@ -406,7 +404,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     footer_x = (W - footer_w) // 2
     footer_y = GRAY_BLOCK_Y + (GRAY_BLOCK_H - footer_h) // 2
     
-    draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='white')  # Текст белый на сером
+    draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='white')
     
     output_path = "output_story.png"
     canvas.save(output_path, "PNG")
