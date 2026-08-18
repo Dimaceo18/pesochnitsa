@@ -96,7 +96,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     photo = photo.resize((PHOTO_WIDTH, PHOTO_HEIGHT), Image.Resampling.LANCZOS)
     
-    # Обводка снизу (8px) - теперь БЕЛАЯ (видна на черном фоне)
+    # Обводка снизу (8px) - БЕЛАЯ
     border_size = 8
     bordered_photo = Image.new('RGB', (PHOTO_WIDTH, PHOTO_HEIGHT + border_size), color='white')
     bordered_photo.paste(photo, (0, 0))
@@ -118,7 +118,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         logging.warning(f"Шрифт {FONT_PATH_REG} не найден")
     
     # 4. ЗАГОЛОВОК (по левому краю, белый)
-    SIDE_MARGIN = 40  # Отступ слева
+    SIDE_MARGIN = 40
+    LINE_SPACING = 8  # Межстрочное расстояние для заголовка
     title_y_position = PHOTO_HEIGHT + border_size + 25
     
     if title:
@@ -183,19 +184,30 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
         title_h = title_bbox[3] - title_bbox[1]
         
-        title_x = SIDE_MARGIN  # По левому краю
+        title_x = SIDE_MARGIN
         title_y = title_y_position
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='white')
         
-        title_y_position = title_y + title_h + 8
+        # Вычисляем высоту заголовка с учетом межстрочного расстояния
+        # Получаем высоту одной строки
+        single_bbox = draw.textbbox((0, 0), "A", font=title_font)
+        single_h = single_bbox[3] - single_bbox[1]
+        
+        # Общая высота заголовка = (количество строк * высота строки) + (межстрочное расстояние * (количество строк - 1))
+        title_total_h = len(title_lines) * single_h + LINE_SPACING * (len(title_lines) - 1)
+        
+        # Обновляем позицию для основного текста с увеличенным отступом
+        title_y_position = title_y + title_total_h + 35  # Увеличили отступ до 35px (было 8)
     
-    # 5. ОСНОВНОЙ ТЕКСТ (по левому краю, белый, на одном уровне с заголовком)
+    # 5. ОСНОВНОЙ ТЕКСТ (по левому краю, белый)
     if content:
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
         MAX_TEXT_W = W - (SIDE_MARGIN * 2)
         MAX_TEXT_H = H - title_y_position - 100
+        
+        CONTENT_LINE_SPACING = 6  # Межстрочное расстояние для основного текста
         
         def fit_content(text, max_w, max_h):
             for size in range(40, 22, -2):
@@ -209,6 +221,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 wrapped_paragraphs = []
                 total_height = 0
                 
+                # Получаем высоту одной строки для этого шрифта
+                single_bbox = draw.textbbox((0, 0), "A", font=font)
+                single_h = single_bbox[3] - single_bbox[1]
+                
                 for para in paragraphs:
                     chars_per_line = int(max_w / (size * 0.6))
                     wrapped = textwrap.wrap(para, width=chars_per_line)
@@ -216,18 +232,21 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                         wrapped = [para]
                     wrapped_paragraphs.append(wrapped)
                     
-                    for line in wrapped:
-                        bbox = draw.textbbox((0, 0), line, font=font)
-                        total_height += bbox[3] - bbox[1]
-                    total_height += 12
+                    # Считаем высоту с учетом межстрочного расстояния
+                    para_height = len(wrapped) * single_h + CONTENT_LINE_SPACING * (len(wrapped) - 1)
+                    total_height += para_height
+                    total_height += 15  # Отступ между абзацами
                 
                 if total_height <= max_h:
-                    return font, wrapped_paragraphs
+                    return font, wrapped_paragraphs, single_h
             
             try:
                 font = ImageFont.truetype(FONT_PATH_REG, 22)
             except:
                 font = ImageFont.load_default()
+            
+            single_bbox = draw.textbbox((0, 0), "A", font=font)
+            single_h = single_bbox[3] - single_bbox[1]
             
             paragraphs = text.split('\n\n')
             wrapped_paragraphs = []
@@ -237,25 +256,21 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 if not wrapped:
                     wrapped = [para]
                 wrapped_paragraphs.append(wrapped)
-            return font, wrapped_paragraphs
+            return font, wrapped_paragraphs, single_h
         
-        content_font, wrapped_paragraphs = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
+        content_font, wrapped_paragraphs, single_h = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
         
         # Начинаем с отступа после заголовка
-        start_y = title_y_position + 5
+        start_y = title_y_position
         
         current_y = start_y
         for para_lines in wrapped_paragraphs:
             for line in para_lines:
-                bbox = draw.textbbox((0, 0), line, font=content_font)
-                line_height = bbox[3] - bbox[1]
-                
-                # Текст ПО ЛЕВОМУ КРАЮ с отступом SIDE_MARGIN
                 line_x = SIDE_MARGIN
                 draw.text((line_x, current_y), line, font=content_font, fill='white')
-                current_y += line_height
+                current_y += single_h + CONTENT_LINE_SPACING  # Увеличиваем межстрочное расстояние
             
-            current_y += 12  # Отступ между абзацами
+            current_y += 15  # Отступ между абзацами
         
         logging.info(f"✅ Основной текст нарисован")
     else:
