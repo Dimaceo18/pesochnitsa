@@ -34,12 +34,10 @@ def parse_text(text: str) -> tuple:
         return "", ""
     
     # Убираем лишние пробелы и разбиваем на предложения
-    # Разбиваем по точкам с пробелом, вопросительным и восклицательным знакам
     sentences = re.split(r'(?<=[.!?])\s+', text.strip())
     sentences = [s.strip() for s in sentences if s.strip()]
     
     if len(sentences) <= 2:
-        # Если предложений мало, всё идет в заголовок
         return text, ""
     
     # Заголовок - первые 2-3 предложения
@@ -50,9 +48,7 @@ def parse_text(text: str) -> tuple:
     content_sentences = sentences[3:]
     content = ". ".join(content_sentences)
     
-    # Если заголовок слишком длинный (более 200 символов), обрезаем
     if len(title) > 200:
-        # Берем первые 2 предложения
         title_sentences = sentences[:2]
         title = ". ".join(title_sentences)
         content_sentences = sentences[2:]
@@ -60,167 +56,187 @@ def parse_text(text: str) -> tuple:
     
     return title, content
 
-# ========== ГЕНЕРАЦИЯ СТОРИС ==========
+# ========== ГЕНЕРАЦИЯ СТОРИС (НОВЫЙ ДИЗАЙН) ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
-    W, H = 1080, 1920
-    HALF_H = H // 2
-
-    # Черный холст
-    canvas = Image.new('RGB', (W, H), color='black')
-
-    # Вставляем фото (занимает верхнюю половину)
-    photo = Image.open(photo_path).convert("RGB")
-    photo_ratio = photo.width / photo.height
-    target_ratio = W / HALF_H
-
-    if photo_ratio > target_ratio:
-        new_height = HALF_H
-        new_width = int(new_height * photo_ratio)
-        photo = photo.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        left = (new_width - W) // 2
-        photo = photo.crop((left, 0, left + W, new_height))
-    else:
-        new_width = W
-        new_height = int(new_width / photo_ratio)
-        photo = photo.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        top = (new_height - HALF_H) // 2
-        photo = photo.crop((0, top, new_width, top + HALF_H))
-
-    canvas.paste(photo, (0, 0))
-
+    W, H = 1080, 1920  # 9:16
+    
+    # 1. БЕЛЫЙ ФОН
+    canvas = Image.new('RGB', (W, H), color='white')
     draw = ImageDraw.Draw(canvas)
-
-    # Шрифты Inter
-    try:
-        font_bold = ImageFont.truetype(FONT_PATH_BOLD, 68)
-    except:
-        font_bold = ImageFont.load_default()
-        logging.warning(f"Шрифт {FONT_PATH_BOLD} не найден, использую дефолтный")
-
-    try:
-        font_reg = ImageFont.truetype(FONT_PATH_REG, 44)
-    except:
-        font_reg = ImageFont.load_default()
-        logging.warning(f"Шрифт {FONT_PATH_REG} не найден, использую дефолтный")
-
-    # ========== ЗАГОЛОВОК ==========
+    
+    # 2. ФОТО (квадрат с черной обводкой)
+    # Размер фото - 80% от ширины, чтобы были отступы
+    PHOTO_SIZE = int(W * 0.8)  # 864px
+    PHOTO_X = (W - PHOTO_SIZE) // 2
+    PHOTO_Y = 60  # Отступ сверху
+    
+    # Обрезаем фото под квадрат (центрируем)
+    photo = Image.open(photo_path).convert("RGB")
+    min_side = min(photo.width, photo.height)
+    left = (photo.width - min_side) // 2
+    top = (photo.height - min_side) // 2
+    photo = photo.crop((left, top, left + min_side, top + min_side))
+    photo = photo.resize((PHOTO_SIZE, PHOTO_SIZE), Image.Resampling.LANCZOS)
+    
+    # Рисуем черную обводку (8px)
+    # Сначала создаем фон для обводки
+    border_size = 8
+    bordered_photo = Image.new('RGB', (PHOTO_SIZE + border_size * 2, PHOTO_SIZE + border_size * 2), color='black')
+    bordered_photo.paste(photo, (border_size, border_size))
+    
+    # Вставляем фото с обводкой на холст
+    canvas.paste(bordered_photo, (PHOTO_X - border_size, PHOTO_Y - border_size))
+    
+    # 3. ЗАГОЛОВОК (большими буквами, максимум 3 строки)
     if title:
-        PADDING_X = 5
-        MAX_TITLE_WIDTH = W - (PADDING_X * 2) - 40  # Учитываем отступы подложки
+        # Подбираем размер шрифта, чтобы заголовок был на 2-3 строки
+        MAX_TITLE_WIDTH = W - 80  # Отступы по 40px
         
-        def wrap_text(text, font, max_width):
-            """Переносит текст по словам с учетом максимальной ширины"""
+        def fit_title(text, max_width):
+            # Пробуем размер от 80 и уменьшаем
+            for size in range(80, 30, -2):
+                try:
+                    font = ImageFont.truetype(FONT_PATH_BOLD, size)
+                except:
+                    font = ImageFont.load_default()
+                
+                # Разбиваем на строки по словам
+                words = text.split()
+                lines = []
+                current_line = []
+                
+                for word in words:
+                    test_line = ' '.join(current_line + [word])
+                    bbox = draw.textbbox((0, 0), test_line.upper(), font=font)
+                    line_width = bbox[2] - bbox[0]
+                    
+                    if line_width <= max_width:
+                        current_line.append(word)
+                    else:
+                        if current_line:
+                            lines.append(' '.join(current_line))
+                        current_line = [word]
+                
+                if current_line:
+                    lines.append(' '.join(current_line))
+                
+                # Если получилось 2-3 строки - подходит
+                if 2 <= len(lines) <= 3:
+                    return font, lines
+                # Если больше 3 строк - уменьшаем шрифт дальше
+                if len(lines) > 3:
+                    continue
+                # Если меньше 2 строк - тоже подходит (мало текста)
+                if len(lines) <= 2:
+                    return font, lines
+            
+            # Если ничего не подошло, берем минимальный размер
+            try:
+                font = ImageFont.truetype(FONT_PATH_BOLD, 36)
+            except:
+                font = ImageFont.load_default()
             words = text.split()
             lines = []
             current_line = []
-            
             for word in words:
                 test_line = ' '.join(current_line + [word])
-                bbox = draw.textbbox((0, 0), test_line, font=font)
-                line_width = bbox[2] - bbox[0]
-                
-                if line_width <= max_width:
+                bbox = draw.textbbox((0, 0), test_line.upper(), font=font)
+                if bbox[2] - bbox[0] <= max_width:
                     current_line.append(word)
                 else:
                     if current_line:
                         lines.append(' '.join(current_line))
                     current_line = [word]
-            
             if current_line:
                 lines.append(' '.join(current_line))
-            
-            return lines
+            return font, lines
         
-        # Ограничиваем заголовок до 3 строк
-        title_lines = wrap_text(title, font_bold, MAX_TITLE_WIDTH)
-        if len(title_lines) > 3:
-            title_lines = title_lines[:3]
-            title_lines[2] = title_lines[2] + "..."
+        title_font, title_lines = fit_title(title, MAX_TITLE_WIDTH)
+        title_text = "\n".join([line.upper() for line in title_lines])
         
-        title_text = "\n".join(title_lines)
-        
-        title_bbox = draw.textbbox((0, 0), title_text, font=font_bold)
+        # Позиция заголовка - сразу под фото
+        title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
         title_w = title_bbox[2] - title_bbox[0]
         title_h = title_bbox[3] - title_bbox[1]
         
         title_x = (W - title_w) // 2
-        title_y = 870 - (title_h // 2)
+        title_y = PHOTO_Y + PHOTO_SIZE + border_size * 2 + 30  # 30px отступ от фото
         
-        # ===== ТЕМНАЯ ПОДЛОЖКА =====
-        padding = 25
-        rect_x1 = title_x - padding
-        rect_y1 = title_y - padding
-        rect_x2 = title_x + title_w + padding
-        rect_y2 = title_y + title_h + padding
+        # Рисуем заголовок (черный)
+        draw.text((title_x, title_y), title_text, font=title_font, fill='black')
         
-        radius = 15
-        
-        # Темная подложка
-        draw.rounded_rectangle(
-            [rect_x1, rect_y1, rect_x2, rect_y2],
-            radius=radius,
-            fill=(30, 30, 30, 220),
-            outline=None
-        )
-        
-        # Белая рамка
-        draw.rounded_rectangle(
-            [rect_x1, rect_y1, rect_x2, rect_y2],
-            radius=radius,
-            fill=None,
-            outline=(255, 255, 255),
-            width=3
-        )
-        
-        # Внутренняя тонкая рамка
-        inner_padding = 5
-        draw.rounded_rectangle(
-            [rect_x1 + inner_padding, rect_y1 + inner_padding, 
-             rect_x2 - inner_padding, rect_y2 - inner_padding],
-            radius=radius - 2,
-            fill=None,
-            outline=(255, 255, 255, 60),
-            width=1
-        )
-        
-        # Текст заголовка (белый)
-        draw.text((title_x, title_y), title_text, font=font_bold, fill='white')
-
-    # ========== ОСНОВНОЙ ТЕКСТ ==========
-    if content:
-        MAX_TEXT_H = H - HALF_H - 80
-        MAX_TEXT_W = W - 60
-
-        def fit_text(text, max_w, max_h):
-            size = 44
-            while size > 20:
+        # 4. ОСНОВНОЙ ТЕКСТ
+        if content:
+            # Ограничиваем текст по высоте
+            TEXT_START_Y = title_y + title_h + 20
+            MAX_TEXT_H = H - TEXT_START_Y - 100  # 100px для нижнего блока
+            MAX_TEXT_W = W - 80
+            
+            def fit_content(text, max_w, max_h):
+                for size in range(44, 20, -2):
+                    try:
+                        font = ImageFont.truetype(FONT_PATH_REG, size)
+                    except:
+                        font = ImageFont.load_default()
+                    
+                    chars_per_line = int(max_w / (size * 0.6))
+                    wrapped = textwrap.wrap(text, width=chars_per_line)
+                    test_text = "\n".join(wrapped)
+                    bbox = draw.textbbox((0, 0), test_text, font=font)
+                    th = bbox[3] - bbox[1]
+                    tw = bbox[2] - bbox[0]
+                    
+                    if th <= max_h and tw <= max_w:
+                        return font, wrapped
+                
                 try:
-                    test_font = ImageFont.truetype(FONT_PATH_REG, size)
+                    font = ImageFont.truetype(FONT_PATH_REG, 20)
                 except:
-                    test_font = ImageFont.load_default()
-                chars_per_line = int(max_w / (size * 0.6))
+                    font = ImageFont.load_default()
+                chars_per_line = int(max_w / (20 * 0.6))
                 wrapped = textwrap.wrap(text, width=chars_per_line)
-                test_text = "\n".join(wrapped)
-                bbox = draw.textbbox((0, 0), test_text, font=test_font)
-                th = bbox[3] - bbox[1]
-                tw = bbox[2] - bbox[0]
-                if th <= max_h and tw <= max_w:
-                    return test_font, wrapped
-                size -= 2
-            return ImageFont.load_default(), [text]
-
-        font_reg_fitted, wrapped_text = fit_text(content, MAX_TEXT_W, MAX_TEXT_H)
-        final_text = "\n".join(wrapped_text)
-
-        bbox = draw.textbbox((0, 0), final_text, font=font_reg_fitted)
-        th = bbox[3] - bbox[1]
-        tw = bbox[2] - bbox[0]
-        
-        text_x = (W - tw) // 2
-        text_y = HALF_H + 40 + (MAX_TEXT_H - th) // 2
-
-        draw.text((text_x, text_y), final_text, font=font_reg_fitted, fill='white')
-
+                return font, wrapped
+            
+            content_font, wrapped_content = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
+            final_text = "\n".join(wrapped_content)
+            
+            bbox = draw.textbbox((0, 0), final_text, font=content_font)
+            th = bbox[3] - bbox[1]
+            tw = bbox[2] - bbox[0]
+            
+            text_x = (W - tw) // 2
+            text_y = TEXT_START_Y + (MAX_TEXT_H - th) // 2
+            
+            draw.text((text_x, text_y), final_text, font=content_font, fill='#333333')
+    
+    # 5. ЖЕЛТЫЙ ПРЯМОУГОЛЬНИК ВНИЗУ
+    YELLOW_BLOCK_H = 60
+    YELLOW_BLOCK_Y = H - YELLOW_BLOCK_H
+    YELLOW_BLOCK_X = 0
+    
+    # Желтый прямоугольник на всю ширину
+    draw.rectangle(
+        [YELLOW_BLOCK_X, YELLOW_BLOCK_Y, W, H],
+        fill='#FFD700'
+    )
+    
+    # Текст внутри желтого блока
+    try:
+        footer_font = ImageFont.truetype(FONT_PATH_BOLD, 28)
+    except:
+        footer_font = ImageFont.load_default()
+    
+    footer_text = "ВСЕГДА СВЕЖИЕ НОВОСТИ"
+    footer_bbox = draw.textbbox((0, 0), footer_text, font=footer_font)
+    footer_w = footer_bbox[2] - footer_bbox[0]
+    footer_h = footer_bbox[3] - footer_bbox[1]
+    
+    footer_x = (W - footer_w) // 2
+    footer_y = YELLOW_BLOCK_Y + (YELLOW_BLOCK_H - footer_h) // 2
+    
+    draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='black')
+    
+    # Сохраняем результат
     output_path = "output_story.png"
     canvas.save(output_path, "PNG")
     return output_path
@@ -233,7 +249,7 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
         await bot.send_photo(
             chat_id=user_id,
             photo=InputFile(output),
-            caption="✅ Готово! Твоя сторис 50/50."
+            caption="✅ Готово! Твоя сторис в новом дизайне."
         )
         if os.path.exists(photo_path):
             os.remove(photo_path)
@@ -250,11 +266,12 @@ user_data = {}
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer(
-        "📱 Привет! Я делаю сторис 50/50 из репостов!\n\n"
+        "📱 Привет! Я делаю сторис в белом стиле!\n\n"
         "Просто отправь мне РЕПОСТ любого поста из Telegram, и я:\n"
-        "1️⃣ Возьму фото из поста\n"
-        "2️⃣ Сделаю заголовок из первых 2-3 предложений\n"
-        "3️⃣ Остальной текст помещу в черную зону\n\n"
+        "1️⃣ Возьму фото и сделаю его квадратом с черной обводкой\n"
+        "2️⃣ Сделаю заголовок большими буквами (2-3 строки)\n"
+        "3️⃣ Остальной текст размещу ниже\n"
+        "4️⃣ Добавлю желтый блок внизу\n\n"
         "Или отправь данные вручную:\n"
         "1. ФОТО\n"
         "2. ЗАГОЛОВОК (текстом)\n"
@@ -267,7 +284,6 @@ async def start(message: types.Message):
 async def handle_forward(message: types.Message):
     user_id = message.from_user.id
     
-    # Проверяем, является ли сообщение репостом
     is_forward = message.forward_from or message.forward_from_chat or message.forward_date
     
     if not is_forward:
@@ -275,10 +291,8 @@ async def handle_forward(message: types.Message):
     
     await message.answer("📥 Обнаружен репост! Обрабатываю...")
     
-    # Получаем текст из репоста
     text = message.text or message.caption or ""
     
-    # Ищем фото в репосте
     photo_file_path = None
     
     if message.photo:
@@ -293,19 +307,15 @@ async def handle_forward(message: types.Message):
         await message.answer("❌ В репосте нет фото! Пожалуйста, отправь репост с изображением.")
         return
     
-    # Удаляем текст "Текст отсутствует" если он есть
     text = text.replace("**Текст отсутствует**", "").strip()
     
-    # Парсим текст на заголовок и основной текст
     title, content = parse_text(text)
     
-    # Если нет заголовка, берем первые 2 предложения
     if not title and text:
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
         title = ". ".join(sentences[:2])
         content = ". ".join(sentences[2:])
     
-    # Если нет текста - используем дефолтные значения
     if not title:
         title = "📌 Заголовок"
     if not content:
@@ -393,7 +403,7 @@ if __name__ == "__main__":
     import asyncio
     from aiogram import executor
     
-    print("🚀 Бот запускается...")
+    print("🚀 Бот запускается в новом белом дизайне...")
     
     async def delete_webhook():
         await bot.delete_webhook()
