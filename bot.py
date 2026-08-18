@@ -28,7 +28,7 @@ dp.middleware.setup(LoggingMiddleware())
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
     """
-    Заголовок = первое предложение или первые 2 предложения (до 150 символов)
+    Заголовок = ТОЛЬКО первый абзац (до первой пустой строки)
     Основной текст = всё остальное
     """
     if not text:
@@ -36,34 +36,45 @@ def parse_text(text: str) -> tuple:
     
     text = text.strip()
     
-    # Разбиваем на предложения по точкам, вопросительным и восклицательным знакам
-    sentences = re.split(r'(?<=[.!?])\s+', text)
-    sentences = [s.strip() for s in sentences if s.strip()]
+    # Разбиваем на абзацы по двойному переводу строки
+    paragraphs = re.split(r'\n\s*\n', text)
+    paragraphs = [p.strip() for p in paragraphs if p.strip()]
     
-    if not sentences:
+    if not paragraphs:
         return "", ""
     
-    # Заголовок - первые 1-2 предложения, но не более 150 символов
-    title = ""
-    for i, sent in enumerate(sentences[:3]):
-        if len(title) + len(sent) + 2 <= 150 and i < 2:
-            if title:
-                title += ". " + sent
-            else:
-                title = sent
+    # ПЕРВЫЙ АБЗАЦ - это заголовок
+    title = paragraphs[0]
+    
+    # ВСЁ ОСТАЛЬНОЕ - основной текст (включая второй, третий абзацы и т.д.)
+    content = "\n\n".join(paragraphs[1:]) if len(paragraphs) > 1 else ""
+    
+    # Если заголовок длиннее 150 символов - обрезаем по последней точке
+    if len(title) > 150:
+        # Ищем последнюю точку, вопросительный или восклицательный знак в пределах 150 символов
+        cut_pos = 150
+        # Ищем последний разделитель в пределах 150 символов
+        last_dot = title.rfind('.', 0, cut_pos)
+        last_q = title.rfind('?', 0, cut_pos)
+        last_excl = title.rfind('!', 0, cut_pos)
+        
+        # Берем самый дальний разделитель
+        cut_pos = max(last_dot, last_q, last_excl)
+        
+        if cut_pos > 0:
+            # Обрезаем заголовок
+            remaining = title[cut_pos+1:].strip()
+            title = title[:cut_pos+1].strip()
+            # Добавляем остаток к основному тексту
+            if remaining:
+                content = remaining + "\n\n" + content if content else remaining
         else:
-            break
+            # Если нет разделителя, просто обрезаем
+            title = title[:150] + "..."
     
-    if not title or len(title) < 10:
-        title = sentences[0]
-        remaining_sentences = sentences[1:]
-    else:
-        title_sent_count = len(title.split('. '))
-        remaining_sentences = sentences[title_sent_count:]
-    
-    content = ". ".join(remaining_sentences) if remaining_sentences else ""
-    
+    # ЛОГИРУЕМ РЕЗУЛЬТАТ
     logging.info(f"📝 Парсинг текста:")
+    logging.info(f"   Всего абзацев: {len(paragraphs)}")
     logging.info(f"   Заголовок ({len(title)} симв): {title[:100]}...")
     logging.info(f"   Контент ({len(content)} симв): {content[:100] if content else 'ПУСТО'}...")
     
@@ -186,19 +197,15 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         
         draw.text((title_x, title_y), title_text, font=title_font, fill='black')
         
-        # МЕНЬШЕ РАССТОЯНИЕ МЕЖДУ ЗАГОЛОВКОМ И ТЕКСТОМ (было 20, стало 8)
         title_y_position = title_y + title_h + 8
     
     # 5. ОСНОВНОЙ ТЕКСТ (по левому краю с отступами)
     if content:
         logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
         
-        # Отступы по бокам (одинаковые слева и справа)
         SIDE_MARGIN = 40
         MAX_TEXT_W = W - (SIDE_MARGIN * 2)
-        
-        # Доступная высота для текста
-        MAX_TEXT_H = H - title_y_position - 100  # 100px для желтого блока
+        MAX_TEXT_H = H - title_y_position - 100
         
         def fit_content(text, max_w, max_h):
             for size in range(40, 22, -2):
@@ -207,38 +214,22 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 except:
                     font = ImageFont.load_default()
                 
-                # Разбиваем на абзацы по точкам с пробелом
-                paragraphs = text.split('. ')
+                # Разбиваем на абзацы
+                paragraphs = text.split('\n\n')
                 wrapped_paragraphs = []
                 total_height = 0
                 
-                # Группируем по 3-4 предложения в абзац для читаемости
-                current_para = []
-                for sent in paragraphs:
-                    current_para.append(sent)
-                    if len(current_para) >= 4:
-                        para_text = ". ".join(current_para)
-                        chars_per_line = int(max_w / (size * 0.6))
-                        wrapped = textwrap.wrap(para_text, width=chars_per_line)
-                        if not wrapped:
-                            wrapped = [para_text]
-                        wrapped_paragraphs.append(wrapped)
-                        for line in wrapped:
-                            bbox = draw.textbbox((0, 0), line, font=font)
-                            total_height += bbox[3] - bbox[1]
-                        total_height += 12  # Отступ между абзацами
-                        current_para = []
-                
-                if current_para:
-                    para_text = ". ".join(current_para)
+                for para in paragraphs:
                     chars_per_line = int(max_w / (size * 0.6))
-                    wrapped = textwrap.wrap(para_text, width=chars_per_line)
+                    wrapped = textwrap.wrap(para, width=chars_per_line)
                     if not wrapped:
-                        wrapped = [para_text]
+                        wrapped = [para]
                     wrapped_paragraphs.append(wrapped)
+                    
                     for line in wrapped:
                         bbox = draw.textbbox((0, 0), line, font=font)
                         total_height += bbox[3] - bbox[1]
+                    total_height += 12
                 
                 if total_height <= max_h:
                     return font, wrapped_paragraphs
@@ -248,40 +239,19 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             except:
                 font = ImageFont.load_default()
             
-            paragraphs = text.split('. ')
+            paragraphs = text.split('\n\n')
             wrapped_paragraphs = []
-            current_para = []
-            for sent in paragraphs:
-                current_para.append(sent)
-                if len(current_para) >= 4:
-                    para_text = ". ".join(current_para)
-                    chars_per_line = int(max_w / (22 * 0.6))
-                    wrapped = textwrap.wrap(para_text, width=chars_per_line)
-                    if not wrapped:
-                        wrapped = [para_text]
-                    wrapped_paragraphs.append(wrapped)
-                    current_para = []
-            if current_para:
-                para_text = ". ".join(current_para)
+            for para in paragraphs:
                 chars_per_line = int(max_w / (22 * 0.6))
-                wrapped = textwrap.wrap(para_text, width=chars_per_line)
+                wrapped = textwrap.wrap(para, width=chars_per_line)
                 if not wrapped:
-                    wrapped = [para_text]
+                    wrapped = [para]
                 wrapped_paragraphs.append(wrapped)
             return font, wrapped_paragraphs
         
         content_font, wrapped_paragraphs = fit_content(content, MAX_TEXT_W, MAX_TEXT_H)
         
-        # Считаем общую высоту
-        total_height = 0
-        for para_lines in wrapped_paragraphs:
-            for line in para_lines:
-                bbox = draw.textbbox((0, 0), line, font=content_font)
-                total_height += bbox[3] - bbox[1]
-            total_height += 12
-        
-        # Начинаем с отступа сверху (не центрируем, а начинаем сверху)
-        start_y = title_y_position + 5  # Небольшой отступ после заголовка
+        start_y = title_y_position + 5
         
         current_y = start_y
         for para_lines in wrapped_paragraphs:
@@ -290,12 +260,11 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 line_width = bbox[2] - bbox[0]
                 line_height = bbox[3] - bbox[1]
                 
-                # ТЕКСТ ПО ЛЕВОМУ КРАЮ с отступом SIDE_MARGIN
                 line_x = SIDE_MARGIN
                 draw.text((line_x, current_y), line, font=content_font, fill='#333333')
                 current_y += line_height
             
-            current_y += 12  # Отступ между абзацами
+            current_y += 12
         
         logging.info(f"✅ Основной текст нарисован")
     else:
@@ -358,7 +327,7 @@ async def start(message: types.Message):
         "📱 Привет! Я делаю сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста, и я:\n"
         "1️⃣ Возьму фото на всю ширину\n"
-        "2️⃣ Первое предложение сделаю заголовком\n"
+        "2️⃣ Первый абзац сделаю заголовком\n"
         "3️⃣ Остальной текст размещу ниже\n\n"
         "Или отправь вручную: ФОТО → ЗАГОЛОВОК → ТЕКСТ"
     )
@@ -403,16 +372,17 @@ async def handle_forward(message: types.Message):
         line = line.strip()
         if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
             clean_lines.append(line)
-    text = ' '.join(clean_lines)
+    text = '\n'.join(clean_lines)
     logging.info(f"🧹 Очищенный текст ({len(text)} симв): {text[:200]}...")
     
     title, content = parse_text(text)
     
+    # Если заголовок пустой - берем первое предложение
     if not title and text:
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-        title = ". ".join(sentences[:2])
-        content = ". ".join(sentences[2:])
-        logging.info(f"🔄 Заголовок из первых 2 предложений: {title[:50]}...")
+        title = sentences[0]
+        content = ". ".join(sentences[1:])
+        logging.info(f"🔄 Заголовок из первого предложения: {title[:50]}...")
     
     if not title:
         title = "📌 Заголовок"
