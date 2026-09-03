@@ -28,25 +28,15 @@ FONT_PATHS = [
 # Размеры сторис
 W, H = 1080, 1920
 
-# ========== ТОЧНЫЕ ОТСТУПЫ ПО МАКЕТУ ==========
+# ========== ОТСТУПЫ ==========
 # ФОТО
-PHOTO_TOP = 60
-PHOTO_HEIGHT = 750
+PHOTO_TOP = 40
+PHOTO_HEIGHT = 800
 PHOTO_WIDTH = W - 80
 PHOTO_LEFT = 40
 
-# ХЕДЕР "FIDER.BY / НОВОСТИ БАРАНОВИЧЕЙ И МИРА"
-HEADER_TOP = PHOTO_TOP + PHOTO_HEIGHT + 25
-HEADER_HEIGHT = 60
-
-# БЛОК "НОВОСТИ" (прямоугольник с обводкой)
-NEWS_BLOCK_TOP = HEADER_TOP + HEADER_HEIGHT + 15
-NEWS_BLOCK_HEIGHT = 55
-NEWS_BLOCK_LEFT = 40
-NEWS_BLOCK_RIGHT = W - 40
-
 # ЗАГОЛОВОК
-TITLE_TOP = NEWS_BLOCK_TOP + NEWS_BLOCK_HEIGHT + 30
+TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
 TITLE_MAX_WIDTH = W - 100
 
 # ФИОЛЕТОВАЯ ЛИНИЯ
@@ -56,9 +46,9 @@ LINE_TOP_OFFSET = 20
 TEXT_TOP_OFFSET = 30
 
 # КНОПКА
-BUTTON_BOTTOM = 150
-BUTTON_PADDING_X = 50
-BUTTON_PADDING_Y = 22
+BUTTON_BOTTOM = 160
+BUTTON_PADDING_X = 60
+BUTTON_PADDING_Y = 28
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -181,9 +171,9 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
     
     return noisy_image
 
-# ========== ГЕНЕРАЦИЯ СТОРИС (ТОЧНО ПО МАКЕТУ) ==========
+# ========== ГЕНЕРАЦИЯ СТОРИС ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
-    logging.info(f"🖼 Генерация сторис по макету:")
+    logging.info(f"🖼 Генерация сторис:")
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
@@ -194,21 +184,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw = ImageDraw.Draw(canvas)
     
     # ============================================================
-    # ШАГ 2: ХЕДЕР "FIDER.BY / НОВОСТИ БАРАНОВИЧЕЙ И МИРА"
-    # ============================================================
-    header_font = load_font(26, 'bold')
-    header_text = "FIDER.BY / НОВОСТИ БАРАНОВИЧЕЙ И МИРА"
-    
-    header_bbox = draw.textbbox((0, 0), header_text, font=header_font)
-    header_w = header_bbox[2] - header_bbox[0]
-    header_h = header_bbox[3] - header_bbox[1]
-    
-    header_x = (W - header_w) // 2
-    header_y = HEADER_TOP + (HEADER_HEIGHT - header_h) // 2
-    draw.text((header_x, header_y), header_text, font=header_font, fill='#333333')
-    
-    # ============================================================
-    # ШАГ 3: ВСТАВЛЯЕМ ФОТО
+    # ШАГ 2: ВСТАВЛЯЕМ ФОТО
     # ============================================================
     try:
         if os.path.exists(photo_path):
@@ -247,33 +223,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                  "📷 ФОТО", font=load_font(36, 'bold'), fill='#999999')
     
     # ============================================================
-    # ШАГ 4: БЛОК "НОВОСТИ" (прямоугольник с обводкой)
-    # ============================================================
-    # Рисуем прямоугольник с фиолетовой обводкой
-    draw.rectangle(
-        [NEWS_BLOCK_LEFT, NEWS_BLOCK_TOP, NEWS_BLOCK_RIGHT, NEWS_BLOCK_TOP + NEWS_BLOCK_HEIGHT],
-        fill='white',
-        outline='#6C3CE1',
-        width=3
-    )
-    
-    # Текст "НОВОСТИ" по центру
-    news_font = load_font(28, 'bold')
-    news_text = "НОВОСТИ"
-    
-    news_bbox = draw.textbbox((0, 0), news_text, font=news_font)
-    news_w = news_bbox[2] - news_bbox[0]
-    news_h = news_bbox[3] - news_bbox[1]
-    
-    news_x = (W - news_w) // 2
-    news_y = NEWS_BLOCK_TOP + (NEWS_BLOCK_HEIGHT - news_h) // 2
-    draw.text((news_x, news_y), news_text, font=news_font, fill='#6C3CE1')
-    
-    # ============================================================
-    # ШАГ 5: ЗАГОЛОВОК (жирный, черный)
+    # ШАГ 3: ЗАГОЛОВОК (жирный, черный)
     # ============================================================
     title_y = TITLE_TOP
-    max_title_height = 220
+    max_title_height = 240
     
     title_font_size = 56
     title_lines = []
@@ -336,7 +289,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
     
     # ============================================================
-    # ШАГ 6: ФИОЛЕТОВАЯ ЛИНИЯ
+    # ШАГ 4: ФИОЛЕТОВАЯ ЛИНИЯ
     # ============================================================
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
     LINE_HEIGHT = 4
@@ -346,7 +299,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     )
     
     # ============================================================
-    # ШАГ 7: ТЕКСТ НОВОСТИ (обычный, черный)
+    # ШАГ 5: ТЕКСТ НОВОСТИ (обычный, черный)
     # ============================================================
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     
@@ -412,35 +365,36 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 8: КНОПКА "ЧИТАТЬ ПОЛНОСТЬЮ НА САЙТЕ"
+    # ШАГ 6: КНОПКА (толстая, фиолетовая, без текста)
     # ============================================================
-    button_text = "ЧИТАТЬ ПОЛНОСТЬЮ НА САЙТЕ"
-    button_font = load_font(28, 'bold')
+    # Рисуем толстую фиолетовую кнопку-прямоугольник
+    button_x1 = (W // 2) - 180
+    button_y1 = H - BUTTON_BOTTOM - 60
+    button_x2 = (W // 2) + 180
+    button_y2 = H - BUTTON_BOTTOM + 10
     
-    button_bbox = draw.textbbox((0, 0), button_text, font=button_font)
-    button_w = button_bbox[2] - button_bbox[0]
-    button_h = button_bbox[3] - button_bbox[1]
-    
-    button_x1 = (W - button_w - BUTTON_PADDING_X * 2) // 2
-    button_y1 = H - BUTTON_BOTTOM - button_h - BUTTON_PADDING_Y * 2
-    button_x2 = button_x1 + button_w + BUTTON_PADDING_X * 2
-    button_y2 = button_y1 + button_h + BUTTON_PADDING_Y * 2
-    
-    # Рисуем фиолетовую кнопку
+    # Толстая кнопка
     draw.rectangle(
         [button_x1, button_y1, button_x2, button_y2],
         fill='#6C3CE1',
         outline='#6C3CE1',
-        width=2
+        width=3
     )
     
-    # Текст кнопки белый
-    button_text_x = (W - button_w) // 2
-    button_text_y = button_y1 + (button_y2 - button_y1 - button_h) // 2
-    draw.text((button_text_x, button_text_y), button_text, font=button_font, fill='white')
+    # Добавляем скругление углов (имитация)
+    # Рисуем маленькие круги по углам для скругления
+    radius = 12
+    # Верхние углы
+    draw.ellipse([button_x1, button_y1, button_x1 + radius*2, button_y1 + radius*2], fill='#6C3CE1')
+    draw.ellipse([button_x2 - radius*2, button_y1, button_x2, button_y1 + radius*2], fill='#6C3CE1')
+    # Нижние углы
+    draw.ellipse([button_x1, button_y2 - radius*2, button_x1 + radius*2, button_y2], fill='#6C3CE1')
+    draw.ellipse([button_x2 - radius*2, button_y2 - radius*2, button_x2, button_y2], fill='#6C3CE1')
+    
+    logging.info(f"✅ Кнопка нарисована, размер: {button_x2 - button_x1}x{button_y2 - button_y1}px")
     
     # ============================================================
-    # ШАГ 9: СОХРАНЯЕМ
+    # ШАГ 7: СОХРАНЯЕМ
     # ============================================================
     output_path = "output_story.png"
     try:
@@ -606,7 +560,7 @@ async def handle_text(message: types.Message):
 if __name__ == "__main__":
     from aiogram import executor
     
-    print("🚀 Бот запускается в стиле FIDER.BY...")
+    print("🚀 Бот запускается...")
     
     async def on_startup(dp):
         try:
