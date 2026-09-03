@@ -168,20 +168,6 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
     
     return noisy_image
 
-# ========== ФУНКЦИЯ ДЛЯ ИЗВЛЕЧЕНИЯ СЛОВ ==========
-def extract_words(text: str) -> list:
-    """Извлекает уникальные слова длиной >= 4 символов"""
-    # Правильное регулярное выражение для кириллицы и латиницы
-    words = re.findall(r'[А-Яа-яA-Za-z]{4,}', text)
-    # Убираем дубликаты, сохраняя порядок
-    unique_words = []
-    seen = set()
-    for word in words:
-        if word not in seen:
-            seen.add(word)
-            unique_words.append(word)
-    return unique_words[:10]  # Максимум 10 слов
-
 # ========== РИСОВАНИЕ ЗАГОЛОВКА С ВЫДЕЛЕНИЕМ ==========
 def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width, font_size):
     """Рисует заголовок с выделенными словами фиолетовым цветом"""
@@ -246,7 +232,7 @@ def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width
         # Высота строки
         line_bbox = draw.textbbox((0, 0), "A", font=title_font)
         line_height = line_bbox[3] - line_bbox[1]
-        current_y += line_height + 8  # Межстрочный интервал
+        current_y += line_height + 8
     
     return current_y
 
@@ -345,10 +331,9 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
         for word in test_words:
             word_bbox = draw.textbbox((0, 0), word, font=test_font)
             total_width += word_bbox[2] - word_bbox[0]
-            total_width += 10  # пробел
+            total_width += 10
         
-        if total_width <= TITLE_MAX_WIDTH * 2:  # максимум 2 строки
-            # Проверяем высоту
+        if total_width <= TITLE_MAX_WIDTH * 2:
             lines_count = 1
             if total_width > TITLE_MAX_WIDTH:
                 lines_count = 2
@@ -492,23 +477,13 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
         await message.answer(f"❌ Ошибка: {str(e)}")
         return False
 
-# ========== КЛАВИАТУРЫ ==========
+# ========== КЛАВИАТУРА ДЛЯ РУБРИК ==========
 def get_rubric_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=3)
     buttons = []
     for rubric in RUBRICS:
         buttons.append(InlineKeyboardButton(rubric, callback_data=f"rubric_{rubric}"))
     keyboard.add(*buttons)
-    return keyboard
-
-def get_highlight_keyboard(words):
-    """Создает клавиатуру для выбора слов для выделения"""
-    keyboard = InlineKeyboardMarkup(row_width=2)
-    buttons = []
-    for word in words[:10]:  # Максимум 10 слов для выбора
-        buttons.append(InlineKeyboardButton(f"💜 {word}", callback_data=f"highlight_{word}"))
-    keyboard.add(*buttons)
-    keyboard.add(InlineKeyboardButton("✅ ПРОДОЛЖИТЬ БЕЗ ВЫДЕЛЕНИЯ", callback_data="highlight_none"))
     return keyboard
 
 # ========== ХЕНДЛЕРЫ ==========
@@ -519,71 +494,10 @@ async def start(message: types.Message):
     await message.answer(
         "📱 Привет! Я делаю стильные сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста с фото и текстом.\n"
-        "Я покажу слова для выделения, затем спрошу рубрику!"
+        "Затем я попрошу ввести слова для выделения (через запятую или пробел).\n"
+        "Потом выбери рубрику!"
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
-
-@dp.callback_query_handler(lambda c: c.data.startswith('highlight_'))
-async def process_highlight_callback(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    data = callback_query.data.replace('highlight_', '')
-    
-    if user_id not in user_data or user_data[user_id].get("step") != "waiting_highlight":
-        await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
-        return
-    
-    if data == "none":
-        # Без выделения
-        user_data[user_id]["highlight_words"] = []
-        user_data[user_id]["step"] = "waiting_rubric"
-        
-        await callback_query.answer("✅ Продолжаем без выделения")
-        
-        await callback_query.message.edit_text(
-            "📌 Выберите рубрику для этой статьи:",
-            reply_markup=get_rubric_keyboard()
-        )
-    else:
-        # Добавляем слово в список выделенных
-        if "highlight_words" not in user_data[user_id]:
-            user_data[user_id]["highlight_words"] = []
-        
-        if data not in user_data[user_id]["highlight_words"]:
-            user_data[user_id]["highlight_words"].append(data)
-            await callback_query.answer(f"✅ Слово '{data}' будет выделено фиолетовым")
-        else:
-            # Убираем слово из выделенных
-            user_data[user_id]["highlight_words"].remove(data)
-            await callback_query.answer(f"❌ Слово '{data}' больше не выделяется")
-        
-        # Обновляем клавиатуру
-        words = user_data[user_id]["words_for_highlight"]
-        keyboard = get_highlight_keyboard(words)
-        # Добавляем кнопку завершения
-        keyboard.add(InlineKeyboardButton("✅ ГОТОВО, ВЫБРАТЬ РУБРИКУ", callback_data="highlight_done"))
-        
-        await callback_query.message.edit_text(
-            f"📝 Выберите слова для выделения фиолетовым:\n\n"
-            f"Выделенные слова: {', '.join(user_data[user_id]['highlight_words']) if user_data[user_id]['highlight_words'] else 'Нет'}\n\n"
-            f"Нажмите на слово - оно выделится. Нажмите еще раз - уберется.",
-            reply_markup=keyboard
-        )
-
-@dp.callback_query_handler(lambda c: c.data == 'highlight_done')
-async def process_highlight_done(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    
-    if user_id not in user_data or user_data[user_id].get("step") != "waiting_highlight":
-        await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
-        return
-    
-    user_data[user_id]["step"] = "waiting_rubric"
-    await callback_query.answer("✅ Переход к выбору рубрики")
-    
-    await callback_query.message.edit_text(
-        "📌 Выберите рубрику для этой статьи:",
-        reply_markup=get_rubric_keyboard()
-    )
 
 @dp.callback_query_handler(lambda c: c.data.startswith('rubric_'))
 async def process_rubric_callback(callback_query: types.CallbackQuery):
@@ -657,33 +571,78 @@ async def handle_forward(message: types.Message):
     if not content:
         content = "Текст отсутствует"
     
-    # Извлекаем слова для выделения (используем исправленную функцию)
-    unique_words = extract_words(title.upper())
-    
-    # Сохраняем данные
+    # Сохраняем данные и запрашиваем слова для выделения
     user_data[user_id] = {
         "photo": photo_file_path,
         "title": title,
         "content": content,
-        "words_for_highlight": unique_words,
         "highlight_words": [],
-        "step": "waiting_highlight"
+        "step": "waiting_highlight_words"
     }
     
-    if unique_words:
-        await message.answer(
-            f"📝 Выберите слова для выделения фиолетовым:\n\n"
-            f"Выделенные слова: Нет\n\n"
-            f"Нажмите на слово - оно выделится. Нажмите еще раз - уберется.",
-            reply_markup=get_highlight_keyboard(unique_words)
-        )
-    else:
-        # Если нет слов для выделения - сразу переходим к рубрике
+    await message.answer(
+        f"📝 Заголовок:\n{title}\n\n"
+        f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
+        f"Слова можно ввести через запятую или пробел.\n"
+        f"Например: {', '.join(title.split()[:3])}\n\n"
+        f"Если не хочешь выделять - отправь 'нет' или '-'"
+    )
+
+@dp.message_handler(content_types=['text'])
+async def handle_highlight_words(message: types.Message):
+    user_id = message.from_user.id
+    
+    if user_id not in user_data:
+        await start(message)
+        return
+    
+    step = user_data[user_id].get("step", "")
+    
+    if step == "waiting_highlight_words":
+        text = message.text.strip()
+        
+        # Если пользователь не хочет выделять слова
+        if text.lower() in ['нет', '-', 'без', 'none', 'skip']:
+            user_data[user_id]["highlight_words"] = []
+        else:
+            # Разбиваем на слова по запятой или пробелу
+            # Сначала пробуем разделить по запятой
+            if ',' in text:
+                words = [w.strip() for w in text.split(',') if w.strip()]
+            else:
+                words = text.split()
+            
+            # Оставляем только слова длиной > 2 символов
+            words = [w for w in words if len(w) > 2]
+            user_data[user_id]["highlight_words"] = words
+        
         user_data[user_id]["step"] = "waiting_rubric"
+        
+        highlight_info = f"Выделенные слова: {', '.join(user_data[user_id]['highlight_words']) if user_data[user_id]['highlight_words'] else 'Нет'}"
         await message.answer(
-            "📌 Выберите рубрику для этой статьи:",
+            f"✅ Слова сохранены!\n{highlight_info}\n\n"
+            f"📌 Теперь выберите рубрику для этой статьи:",
             reply_markup=get_rubric_keyboard()
         )
+        return
+    
+    # Для ручного ввода через фото
+    if step == "waiting_title":
+        user_data[user_id]["title"] = message.text
+        user_data[user_id]["step"] = "waiting_content"
+        await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
+    elif step == "waiting_content":
+        user_data[user_id]["content"] = message.text
+        title = user_data[user_id]["title"]
+        
+        await message.answer(
+            f"📝 Заголовок:\n{title}\n\n"
+            f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
+            f"Слова можно ввести через запятую или пробел.\n"
+            f"Например: {', '.join(title.split()[:3])}\n\n"
+            f"Если не хочешь выделять - отправь 'нет' или '-'"
+        )
+        user_data[user_id]["step"] = "waiting_highlight_words"
 
 # ========== РУЧНОЙ ВВОД ==========
 @dp.message_handler(content_types=['photo'])
@@ -699,30 +658,21 @@ async def handle_photo(message: types.Message):
         file_path = f"temp_{user_id}.jpg"
         await bot.download_file(file.file_path, file_path)
         
-        unique_words = extract_words(title.upper())
-        
         user_data[user_id] = {
             "photo": file_path,
             "title": title,
             "content": content,
-            "words_for_highlight": unique_words,
             "highlight_words": [],
-            "step": "waiting_highlight"
+            "step": "waiting_highlight_words"
         }
         
-        if unique_words:
-            await message.answer(
-                f"📝 Выберите слова для выделения фиолетовым:\n\n"
-                f"Выделенные слова: Нет\n\n"
-                f"Нажмите на слово - оно выделится. Нажмите еще раз - уберется.",
-                reply_markup=get_highlight_keyboard(unique_words)
-            )
-        else:
-            user_data[user_id]["step"] = "waiting_rubric"
-            await message.answer(
-                "📌 Выберите рубрику для этой статьи:",
-                reply_markup=get_rubric_keyboard()
-            )
+        await message.answer(
+            f"📝 Заголовок:\n{title}\n\n"
+            f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
+            f"Слова можно ввести через запятую или пробел.\n"
+            f"Например: {', '.join(title.split()[:3])}\n\n"
+            f"Если не хочешь выделять - отправь 'нет' или '-'"
+        )
         return
     
     if user_id not in user_data:
@@ -735,50 +685,11 @@ async def handle_photo(message: types.Message):
     user_data[user_id]["step"] = "waiting_title"
     await message.answer("✅ Фото принято! Теперь отправь ЗАГОЛОВОК.")
 
-@dp.message_handler(content_types=['text'])
-async def handle_text(message: types.Message):
-    user_id = message.from_user.id
-    if message.forward_from or message.forward_from_chat or message.forward_date:
-        return
-    if message.text.startswith('/'):
-        return
-    if user_id not in user_data:
-        await start(message)
-        return
-    
-    step = user_data[user_id].get("step", "")
-    if step == "waiting_title":
-        user_data[user_id]["title"] = message.text
-        user_data[user_id]["step"] = "waiting_content"
-        await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
-    elif step == "waiting_content":
-        user_data[user_id]["content"] = message.text
-        title = user_data[user_id]["title"]
-        
-        unique_words = extract_words(title.upper())
-        user_data[user_id]["words_for_highlight"] = unique_words
-        user_data[user_id]["highlight_words"] = []
-        user_data[user_id]["step"] = "waiting_highlight"
-        
-        if unique_words:
-            await message.answer(
-                f"📝 Выберите слова для выделения фиолетовым:\n\n"
-                f"Выделенные слова: Нет\n\n"
-                f"Нажмите на слово - оно выделится. Нажмите еще раз - уберется.",
-                reply_markup=get_highlight_keyboard(unique_words)
-            )
-        else:
-            user_data[user_id]["step"] = "waiting_rubric"
-            await message.answer(
-                "📌 Выберите рубрику для этой статьи:",
-                reply_markup=get_rubric_keyboard()
-            )
-
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     from aiogram import executor
     
-    print("🚀 Бот запускается с выделением слов...")
+    print("🚀 Бот запускается с ручным вводом слов для выделения...")
     
     async def on_startup(dp):
         try:
