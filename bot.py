@@ -36,11 +36,11 @@ PHOTO_HEIGHT = 800
 PHOTO_WIDTH = W - 80
 PHOTO_LEFT = 40
 
-# РУБРИКА (фиолетовый прямоугольник поверх фото с прямыми углами)
+# РУБРИКА (фиолетовый прямоугольник поверх фото)
 RUBRIC_TOP = PHOTO_TOP + 20
 RUBRIC_LEFT = PHOTO_LEFT + 20
-RUBRIC_PADDING_X = 30  # Отступы по бокам текста
-RUBRIC_PADDING_Y = 12  # Отступы сверху/снизу текста
+RUBRIC_PADDING_X = 30
+RUBRIC_PADDING_Y = 12
 
 # ЗАГОЛОВОК
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
@@ -52,10 +52,10 @@ LINE_TOP_OFFSET = 20
 # ТЕКСТ НОВОСТИ
 TEXT_TOP_OFFSET = 15
 
-# КНОПКА
-BUTTON_BOTTOM = 160
-BUTTON_WIDTH = 800
-BUTTON_HEIGHT = 160
+# КНОПКА (уменьшена на 25%)
+BUTTON_BOTTOM = 140
+BUTTON_WIDTH = 600   # Было 800, уменьшено на 25%
+BUTTON_HEIGHT = 120  # Было 160, уменьшено на 25%
 
 # ========== РУБРИКИ ==========
 RUBRICS = ["НОВОСТИ", "АФИША", "СПОРТ", "ФИНАНСЫ", "АВТО", "НЕДВИЖИМОСТЬ"]
@@ -265,12 +265,12 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
         width=2
     )
     
-    # Текст рубрики ровно по центру прямоугольника
+    # Текст рубрики чуть выше центра (смещение вверх на 2px)
     rub_text_x = rub_x1 + (rub_x2 - rub_x1 - rubric_w) // 2
-    rub_text_y = rub_y1 + (rub_y2 - rub_y1 - rubric_h) // 2
+    rub_text_y = rub_y1 + (rub_y2 - rub_y1 - rubric_h) // 2 - 2  # Смещение вверх на 2px
     draw.text((rub_text_x, rub_text_y), rubric, font=rubric_font, fill='white')
     
-    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото (прямые углы, текст по центру)")
+    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото (текст чуть выше центра)")
     
     # ============================================================
     # ШАГ 4: ЗАГОЛОВОК (черный, жирный)
@@ -415,7 +415,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 7: КНОПКА
+    # ШАГ 7: КНОПКА (уменьшена на 25%)
     # ============================================================
     button_x1 = (W - BUTTON_WIDTH) // 2
     button_y1 = H - BUTTON_BOTTOM - BUTTON_HEIGHT
