@@ -5,6 +5,7 @@ import random
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import textwrap
 import io
 
@@ -35,20 +36,30 @@ PHOTO_HEIGHT = 800
 PHOTO_WIDTH = W - 80
 PHOTO_LEFT = 40
 
+# РУБРИКА (фиолетовый прямоугольник поверх фото)
+RUBRIC_TOP = PHOTO_TOP + 20
+RUBRIC_LEFT = PHOTO_LEFT + 20
+RUBRIC_PADDING_X = 25
+RUBRIC_PADDING_Y = 10
+RUBRIC_RADIUS = 10
+
 # ЗАГОЛОВОК
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
 TITLE_MAX_WIDTH = W - 100
 
-# ФИОЛЕТОВАЯ ЛИНИЯ (расстояние 20px от заголовка)
+# ФИОЛЕТОВАЯ ЛИНИЯ
 LINE_TOP_OFFSET = 20
 
-# ТЕКСТ НОВОСТИ (расстояние 15px от линии)
+# ТЕКСТ НОВОСТИ
 TEXT_TOP_OFFSET = 15
 
-# КНОПКА (в 2 раза больше)
+# КНОПКА
 BUTTON_BOTTOM = 160
-BUTTON_WIDTH = 800   # Ширина кнопки (было 400, теперь в 2 раза больше)
-BUTTON_HEIGHT = 160  # Высота кнопки (было 80, теперь в 2 раза больше)
+BUTTON_WIDTH = 800
+BUTTON_HEIGHT = 160
+
+# ========== РУБРИКИ ==========
+RUBRICS = ["НОВОСТИ", "АФИША", "СПОРТ", "ФИНАНСЫ", "АВТО", "НЕДВИЖИМОСТЬ"]
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -83,11 +94,9 @@ def draw_rounded_rectangle(draw, xy, radius, fill, outline=None, width=1):
     """Рисует прямоугольник с закругленными углами"""
     x1, y1, x2, y2 = xy
     
-    # Основной прямоугольник
     draw.rectangle([x1 + radius, y1, x2 - radius, y2], fill=fill, outline=outline, width=width)
     draw.rectangle([x1, y1 + radius, x2, y2 - radius], fill=fill, outline=outline, width=width)
     
-    # Четыре закругленных угла
     draw.ellipse([x1, y1, x1 + radius*2, y1 + radius*2], fill=fill, outline=outline, width=width)
     draw.ellipse([x2 - radius*2, y1, x2, y1 + radius*2], fill=fill, outline=outline, width=width)
     draw.ellipse([x1, y2 - radius*2, x1 + radius*2, y2], fill=fill, outline=outline, width=width)
@@ -145,26 +154,21 @@ def parse_text(text: str) -> tuple:
     
     return title, content
 
-# ========== РЕТРО-ЭФФЕКТ ==========
-def apply_retro_effect(image: Image.Image) -> Image.Image:
+# ========== ОБРАБОТКА ФОТО (НОВЫЙ ЭФФЕКТ) ==========
+def apply_photo_effect(image: Image.Image) -> Image.Image:
+    """Применяет эффекты к фото: шум +5%, насыщенность +5%"""
     if image.mode != 'RGB':
         image = image.convert('RGB')
     
-    enhancer = ImageEnhance.Contrast(image)
-    image = enhancer.enhance(0.75)
+    # 1. Увеличение насыщенности на 5%
+    enhancer = ImageEnhance.Color(image)
+    image = enhancer.enhance(1.05)
     
-    width, height = image.size
-    sepia_overlay = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-    sepia_draw = ImageDraw.Draw(sepia_overlay)
-    sepia_draw.rectangle([(0, 0), (width, height)], fill=(180, 130, 80, 40))
-    image = image.convert('RGBA')
-    image = Image.alpha_composite(image, sepia_overlay)
-    image = image.convert('RGB')
-    
+    # 2. Добавление шума 5%
     pixel_data = list(image.getdata())
     width, height = image.size
     
-    noise_intensity = 22
+    noise_intensity = 12  # ~5% от 255
     noisy_pixels = []
     
     for pixel in pixel_data:
@@ -179,16 +183,13 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
     
     noisy_image = Image.new('RGB', (width, height))
     noisy_image.putdata(noisy_pixels)
-    noisy_image = noisy_image.filter(ImageFilter.GaussianBlur(radius=0.8))
-    
-    enhancer = ImageEnhance.Brightness(noisy_image)
-    noisy_image = enhancer.enhance(1.1)
     
     return noisy_image
 
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
-async def generate_story(photo_path: str, title: str, content: str) -> str:
+async def generate_story(photo_path: str, title: str, content: str, rubric: str) -> str:
     logging.info(f"🖼 Генерация сторис:")
+    logging.info(f"   Рубрика: {rubric}")
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
@@ -199,7 +200,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw = ImageDraw.Draw(canvas)
     
     # ============================================================
-    # ШАГ 2: ВСТАВЛЯЕМ ФОТО
+    # ШАГ 2: ВСТАВЛЯЕМ ФОТО С ЭФФЕКТАМИ
     # ============================================================
     try:
         if os.path.exists(photo_path):
@@ -221,8 +222,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 top = (new_height - PHOTO_HEIGHT) // 2
                 photo = photo.crop((0, top, new_width, top + PHOTO_HEIGHT))
             
-            # Применяем ретро-эффект
-            photo = apply_retro_effect(photo)
+            # Применяем эффекты (шум +5%, насыщенность +5%)
+            photo = apply_photo_effect(photo)
             
             # Вставляем фото с серой рамкой
             bordered_photo = Image.new('RGB', (PHOTO_WIDTH + 4, PHOTO_HEIGHT + 4), color='#e0e0e0')
@@ -238,7 +239,38 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                  "📷 ФОТО", font=load_font(36, 'bold'), fill='#999999')
     
     # ============================================================
-    # ШАГ 3: ЗАГОЛОВОК (черный, жирный)
+    # ШАГ 3: РУБРИКА (фиолетовый прямоугольник поверх фото)
+    # ============================================================
+    rubric_font = load_font(32, 'bold')
+    rubric_bbox = draw.textbbox((0, 0), rubric, font=rubric_font)
+    rubric_w = rubric_bbox[2] - rubric_bbox[0]
+    rubric_h = rubric_bbox[3] - rubric_bbox[1]
+    
+    # Координаты прямоугольника рубрики
+    rub_x1 = RUBRIC_LEFT
+    rub_y1 = RUBRIC_TOP
+    rub_x2 = RUBRIC_LEFT + rubric_w + RUBRIC_PADDING_X * 2
+    rub_y2 = RUBRIC_TOP + rubric_h + RUBRIC_PADDING_Y * 2
+    
+    # Рисуем фиолетовый прямоугольник с закругленными углами
+    draw_rounded_rectangle(
+        draw,
+        [rub_x1, rub_y1, rub_x2, rub_y2],
+        RUBRIC_RADIUS,
+        fill='#6C3CE1',
+        outline='#6C3CE1',
+        width=2
+    )
+    
+    # Текст рубрики белый
+    rub_text_x = rub_x1 + RUBRIC_PADDING_X
+    rub_text_y = rub_y1 + RUBRIC_PADDING_Y
+    draw.text((rub_text_x, rub_text_y), rubric, font=rubric_font, fill='white')
+    
+    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
+    
+    # ============================================================
+    # ШАГ 4: ЗАГОЛОВОК (черный, жирный)
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 240
@@ -295,7 +327,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     title_font = load_font(title_font_size, 'bold')
     title_text = "\n".join(title_lines)
-    # ЗАГОЛОВОК ЧЕРНЫЙ
     draw.text((50, title_y), title_text, font=title_font, fill='black')
     
     title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
@@ -305,7 +336,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
     
     # ============================================================
-    # ШАГ 4: ФИОЛЕТОВАЯ ЛИНИЯ (20px от заголовка)
+    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ
     # ============================================================
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
     LINE_HEIGHT = 4
@@ -315,7 +346,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     )
     
     # ============================================================
-    # ШАГ 5: ТЕКСТ НОВОСТИ (черный, 15px от линии)
+    # ШАГ 6: ТЕКСТ НОВОСТИ
     # ============================================================
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     
@@ -381,14 +412,13 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 6: КНОПКА В ВИДЕ ЭЛЛИПСА (в 2 раза больше)
+    # ШАГ 7: КНОПКА
     # ============================================================
     button_x1 = (W - BUTTON_WIDTH) // 2
     button_y1 = H - BUTTON_BOTTOM - BUTTON_HEIGHT
     button_x2 = button_x1 + BUTTON_WIDTH
     button_y2 = button_y1 + BUTTON_HEIGHT
     
-    # Радиус скругления (половина высоты для эллипса)
     radius = BUTTON_HEIGHT // 2
     
     draw_rounded_rectangle(
@@ -400,10 +430,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         width=3
     )
     
-    logging.info(f"✅ Кнопка-эллипс нарисована, размер: {BUTTON_WIDTH}x{BUTTON_HEIGHT}px, радиус: {radius}px")
+    logging.info(f"✅ Кнопка нарисована, размер: {BUTTON_WIDTH}x{BUTTON_HEIGHT}px")
     
     # ============================================================
-    # ШАГ 7: СОХРАНЯЕМ
+    # ШАГ 8: СОХРАНЯЕМ
     # ============================================================
     output_path = "output_story.png"
     try:
@@ -422,9 +452,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         return output_path
 
 # ========== ОБЩАЯ ФУНКЦИЯ ==========
-async def process_story(user_id: int, photo_path: str, title: str, content: str, message: types.Message):
+async def process_story(user_id: int, photo_path: str, title: str, content: str, rubric: str, message: types.Message):
     try:
-        output = await generate_story(photo_path, title, content)
+        output = await generate_story(photo_path, title, content, rubric)
         
         with open(output, 'rb') as photo_file:
             await bot.send_photo(
@@ -446,6 +476,15 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
         await message.answer(f"❌ Ошибка: {str(e)}")
         return False
 
+# ========== КЛАВИАТУРА ДЛЯ ВЫБОРА РУБРИКИ ==========
+def get_rubric_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=3)
+    buttons = []
+    for rubric in RUBRICS:
+        buttons.append(InlineKeyboardButton(rubric, callback_data=f"rubric_{rubric}"))
+    keyboard.add(*buttons)
+    return keyboard
+
 # ========== ХЕНДЛЕРЫ ==========
 user_data = {}
 
@@ -454,9 +493,33 @@ async def start(message: types.Message):
     await message.answer(
         "📱 Привет! Я делаю стильные сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста с фото и текстом.\n"
-        "Дизайн автоматически подстроится под твой контент!"
+        "Я спрошу рубрику, и создам красивую сторис!"
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
+
+@dp.callback_query_handler(lambda c: c.data.startswith('rubric_'))
+async def process_rubric_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    rubric = callback_query.data.replace('rubric_', '')
+    
+    if user_id not in user_data or user_data[user_id].get("step") != "waiting_rubric":
+        await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
+        return
+    
+    user_data[user_id]["rubric"] = rubric
+    user_data[user_id]["step"] = "done"
+    
+    await callback_query.answer(f"✅ Выбрана рубрика: {rubric}")
+    
+    photo_path = user_data[user_id]["photo"]
+    title = user_data[user_id]["title"]
+    content = user_data[user_id]["content"]
+    
+    await callback_query.message.answer(f"⏳ Генерирую сторис с рубрикой '{rubric}'...")
+    await process_story(user_id, photo_path, title, content, rubric, callback_query.message)
+    
+    if user_id in user_data:
+        del user_data[user_id]
 
 @dp.message_handler(content_types=['text', 'photo', 'document'])
 async def handle_forward(message: types.Message):
@@ -505,11 +568,18 @@ async def handle_forward(message: types.Message):
     if not content:
         content = "Текст отсутствует"
     
-    await message.answer(f"⏳ Генерирую стильную сторис...")
-    await process_story(user_id, photo_file_path, title, content, message)
+    # Сохраняем данные и запрашиваем рубрику
+    user_data[user_id] = {
+        "photo": photo_file_path,
+        "title": title,
+        "content": content,
+        "step": "waiting_rubric"
+    }
     
-    if user_id in user_data:
-        del user_data[user_id]
+    await message.answer(
+        "📌 Выберите рубрику для этой статьи:",
+        reply_markup=get_rubric_keyboard()
+    )
 
 # ========== РУЧНОЙ ВВОД ==========
 @dp.message_handler(content_types=['photo'])
@@ -524,8 +594,18 @@ async def handle_photo(message: types.Message):
         file = await bot.get_file(message.photo[-1].file_id)
         file_path = f"temp_{user_id}.jpg"
         await bot.download_file(file.file_path, file_path)
-        await message.answer("⏳ Генерирую...")
-        await process_story(user_id, file_path, title, content, message)
+        
+        user_data[user_id] = {
+            "photo": file_path,
+            "title": title,
+            "content": content,
+            "step": "waiting_rubric"
+        }
+        
+        await message.answer(
+            "📌 Выберите рубрику для этой статьи:",
+            reply_markup=get_rubric_keyboard()
+        )
         return
     
     if user_id not in user_data:
@@ -556,20 +636,18 @@ async def handle_text(message: types.Message):
         await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
     elif step == "waiting_content":
         user_data[user_id]["content"] = message.text
-        user_data[user_id]["step"] = "done"
-        await message.answer("⏳ Генерирую...")
-        photo_path = user_data[user_id]["photo"]
-        title = user_data[user_id]["title"]
-        content = user_data[user_id]["content"]
-        await process_story(user_id, photo_path, title, content, message)
-        if user_id in user_data:
-            del user_data[user_id]
+        user_data[user_id]["step"] = "waiting_rubric"
+        
+        await message.answer(
+            "📌 Выберите рубрику для этой статьи:",
+            reply_markup=get_rubric_keyboard()
+        )
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     from aiogram import executor
     
-    print("🚀 Бот запускается...")
+    print("🚀 Бот запускается с рубриками...")
     
     async def on_startup(dp):
         try:
