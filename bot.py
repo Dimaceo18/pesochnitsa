@@ -8,6 +8,7 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import textwrap
 import io
+import asyncio
 
 # ========== КОНФИГ ==========
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -491,15 +492,187 @@ user_data = {}
 
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
+    user_id = message.from_user.id
+    user_data[user_id] = {"step": "waiting_photo"}
     await message.answer(
         "📱 Привет! Я делаю стильные сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста с фото и текстом.\n"
         "Затем я попрошу ввести слова для выделения (через запятую или пробел).\n"
         "Потом выбери рубрику!"
     )
-    user_data[message.from_user.id] = {"step": "waiting_photo"}
 
-@dp.callback_query_handler(lambda c: c.data.startswith('rubric_'))
+@dp.message_handler(content_types=['photo', 'document'])
+async def handle_photo_or_document(message: types.Message):
+    user_id = message.from_user.id
+    is_forward = message.forward_from or message.forward_from_chat or message.forward_date
+    
+    # Обработка репоста
+    if is_forward:
+        await message.answer("📥 Обнаружен репост! Обрабатываю...")
+        
+        text = message.text or message.caption or ""
+        photo_file_path = None
+        
+        if message.photo:
+            file = await bot.get_file(message.photo[-1].file_id)
+            photo_file_path = f"temp_{user_id}_forward.jpg"
+            await bot.download_file(file.file_path, photo_file_path)
+        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
+            file = await bot.get_file(message.document.file_id)
+            photo_file_path = f"temp_{user_id}_forward.jpg"
+            await bot.download_file(file.file_path, photo_file_path)
+        else:
+            await message.answer("❌ В репосте нет фото!")
+            return
+        
+        text = text.replace("**Текст отсутствует**", "").strip()
+        lines = text.split('\n')
+        clean_lines = []
+        for line in lines:
+            line = line.strip()
+            if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
+                clean_lines.append(line)
+        text = '\n'.join(clean_lines)
+        
+        title, content = parse_text(text)
+        
+        if not title and text:
+            sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+            if sentences:
+                title = sentences[0]
+                content = ". ".join(sentences[1:])
+        
+        if not title:
+            title = "ЗДЕСЬ БУДЕТ ЗАГОЛОВОК ВАШЕЙ НОВОСТИ"
+        if not content:
+            content = "Текст отсутствует"
+        
+        # Сохраняем данные
+        user_data[user_id] = {
+            "photo": photo_file_path,
+            "title": title,
+            "content": content,
+            "highlight_words": [],
+            "step": "waiting_highlight_words"
+        }
+        
+        await message.answer(
+            f"📝 Заголовок:\n{title}\n\n"
+            f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
+            f"Слова можно ввести через запятую или пробел.\n"
+            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
+            f"Если не хочешь выделять - отправь 'нет' или '-'"
+        )
+        return
+    
+    # Ручной ввод фото без репоста
+    if user_id not in user_data:
+        user_data[user_id] = {"step": "waiting_photo"}
+    
+    caption = message.caption or ""
+    if caption:
+        title, content = parse_text(caption)
+        file = await bot.get_file(message.photo[-1].file_id)
+        file_path = f"temp_{user_id}.jpg"
+        await bot.download_file(file.file_path, file_path)
+        
+        user_data[user_id] = {
+            "photo": file_path,
+            "title": title,
+            "content": content,
+            "highlight_words": [],
+            "step": "waiting_highlight_words"
+        }
+        
+        await message.answer(
+            f"📝 Заголовок:\n{title}\n\n"
+            f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
+            f"Слова можно ввести через запятую или пробел.\n"
+            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
+            f"Если не хочешь выделять - отправь 'нет' или '-'"
+        )
+        return
+    
+    # Если фото без подписи
+    file = await bot.get_file(message.photo[-1].file_id)
+    file_path = f"temp_{user_id}.jpg"
+    await bot.download_file(file.file_path, file_path)
+    user_data[user_id]["photo"] = file_path
+    user_data[user_id]["step"] = "waiting_title"
+    await message.answer("✅ Фото принято! Теперь отправь ЗАГОЛОВОК.")
+
+@dp.message_handler(content_types=['text'])
+async def handle_text(message: types.Message):
+    user_id = message.from_user.id
+    
+    # Пропускаем команды
+    if message.text.startswith('/'):
+        return
+    
+    # Если пользователь не в базе - отправляем старт
+    if user_id not in user_data:
+        await start(message)
+        return
+    
+    step = user_data[user_id].get("step", "")
+    
+    # Шаг 1: Ожидание заголовка
+    if step == "waiting_title":
+        user_data[user_id]["title"] = message.text
+        user_data[user_id]["step"] = "waiting_content"
+        await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
+        return
+    
+    # Шаг 2: Ожидание основного текста
+    if step == "waiting_content":
+        user_data[user_id]["content"] = message.text
+        title = user_data[user_id]["title"]
+        
+        await message.answer(
+            f"📝 Заголовок:\n{title}\n\n"
+            f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
+            f"Слова можно ввести через запятую или пробел.\n"
+            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
+            f"Если не хочешь выделять - отправь 'нет' или '-'"
+        )
+        user_data[user_id]["step"] = "waiting_highlight_words"
+        return
+    
+    # Шаг 3: Ожидание слов для выделения
+    if step == "waiting_highlight_words":
+        text = message.text.strip()
+        
+        # Если пользователь не хочет выделять слова
+        if text.lower() in ['нет', '-', 'без', 'none', 'skip', 'не надо']:
+            user_data[user_id]["highlight_words"] = []
+        else:
+            # Разбиваем на слова по запятой или пробелу
+            if ',' in text:
+                words = [w.strip() for w in text.split(',') if w.strip()]
+            else:
+                words = text.split()
+            
+            # Оставляем только слова длиной > 2 символов
+            words = [w for w in words if len(w) > 2]
+            user_data[user_id]["highlight_words"] = words
+        
+        user_data[user_id]["step"] = "waiting_rubric"
+        
+        highlight_info = f"Выделенные слова: {', '.join(user_data[user_id]['highlight_words']) if user_data[user_id]['highlight_words'] else 'Нет'}"
+        await message.answer(
+            f"✅ Слова сохранены!\n{highlight_info}\n\n"
+            f"📌 Теперь выберите рубрику для этой статьи:",
+            reply_markup=get_rubric_keyboard()
+        )
+        return
+    
+    # Если пришло текстовое сообщение на другом шаге
+    await message.answer(
+        "❓ Я не понял. Пожалуйста, следуй инструкциям.\n"
+        "Если хочешь начать заново - отправь /start"
+    )
+
+@dp.callback_query_handler(lambda c: c.data and c.data.startswith('rubric_'))
 async def process_rubric_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     rubric = callback_query.data.replace('rubric_', '')
@@ -529,196 +702,23 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
     if user_id in user_data:
         del user_data[user_id]
 
-@dp.message_handler(content_types=['text', 'photo', 'document'])
-async def handle_forward(message: types.Message):
-    user_id = message.from_user.id
-    is_forward = message.forward_from or message.forward_from_chat or message.forward_date
-    
-    if not is_forward:
-        return
-    
-    await message.answer("📥 Обнаружен репост! Обрабатываю...")
-    
-    text = message.text or message.caption or ""
-    photo_file_path = None
-    
-    if message.photo:
-        file = await bot.get_file(message.photo[-1].file_id)
-        photo_file_path = f"temp_{user_id}_forward.jpg"
-        await bot.download_file(file.file_path, photo_file_path)
-    elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
-        file = await bot.get_file(message.document.file_id)
-        photo_file_path = f"temp_{user_id}_forward.jpg"
-        await bot.download_file(file.file_path, photo_file_path)
-    else:
-        await message.answer("❌ В репосте нет фото!")
-        return
-    
-    text = text.replace("**Текст отсутствует**", "").strip()
-    lines = text.split('\n')
-    clean_lines = []
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
-            clean_lines.append(line)
-    text = '\n'.join(clean_lines)
-    
-    title, content = parse_text(text)
-    
-    if not title and text:
-        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-        if sentences:
-            title = sentences[0]
-            content = ". ".join(sentences[1:])
-    
-    if not title:
-        title = "ЗДЕСЬ БУДЕТ ЗАГОЛОВОК ВАШЕЙ НОВОСТИ"
-    if not content:
-        content = "Текст отсутствует"
-    
-    # Сохраняем данные и запрашиваем слова для выделения
-    user_data[user_id] = {
-        "photo": photo_file_path,
-        "title": title,
-        "content": content,
-        "highlight_words": [],
-        "step": "waiting_highlight_words"
-    }
-    
-    await message.answer(
-        f"📝 Заголовок:\n{title}\n\n"
-        f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
-        f"Слова можно ввести через запятую или пробел.\n"
-        f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
-        f"Если не хочешь выделять - отправь 'нет' или '-'"
-    )
-
-# ========== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ==========
-@dp.message_handler(content_types=['text'])
-async def handle_text_messages(message: types.Message):
-    user_id = message.from_user.id
-    
-    # Пропускаем команды
-    if message.text.startswith('/'):
-        return
-    
-    # Если пользователь не в базе - отправляем старт
-    if user_id not in user_data:
-        await start(message)
-        return
-    
-    step = user_data[user_id].get("step", "")
-    
-    # Обработка ввода слов для выделения
-    if step == "waiting_highlight_words":
-        text = message.text.strip()
-        
-        # Если пользователь не хочет выделять слова
-        if text.lower() in ['нет', '-', 'без', 'none', 'skip']:
-            user_data[user_id]["highlight_words"] = []
-        else:
-            # Разбиваем на слова по запятой или пробелу
-            if ',' in text:
-                words = [w.strip() for w in text.split(',') if w.strip()]
-            else:
-                words = text.split()
-            
-            # Оставляем только слова длиной > 2 символов
-            words = [w for w in words if len(w) > 2]
-            user_data[user_id]["highlight_words"] = words
-        
-        user_data[user_id]["step"] = "waiting_rubric"
-        
-        highlight_info = f"Выделенные слова: {', '.join(user_data[user_id]['highlight_words']) if user_data[user_id]['highlight_words'] else 'Нет'}"
-        await message.answer(
-            f"✅ Слова сохранены!\n{highlight_info}\n\n"
-            f"📌 Теперь выберите рубрику для этой статьи:",
-            reply_markup=get_rubric_keyboard()
-        )
-        return
-    
-    # Ручной ввод через фото (без репоста)
-    if step == "waiting_title":
-        user_data[user_id]["title"] = message.text
-        user_data[user_id]["step"] = "waiting_content"
-        await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
-        return
-    
-    if step == "waiting_content":
-        user_data[user_id]["content"] = message.text
-        title = user_data[user_id]["title"]
-        
-        await message.answer(
-            f"📝 Заголовок:\n{title}\n\n"
-            f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
-            f"Слова можно ввести через запятую или пробел.\n"
-            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
-            f"Если не хочешь выделять - отправь 'нет' или '-'"
-        )
-        user_data[user_id]["step"] = "waiting_highlight_words"
-        return
-    
-    # Если пришло текстовое сообщение на другом шаге
-    await message.answer(
-        "❓ Я не понял. Пожалуйста, следуй инструкциям.\n"
-        "Если хочешь начать заново - отправь /start"
-    )
-
-# ========== РУЧНОЙ ВВОД ==========
-@dp.message_handler(content_types=['photo'])
-async def handle_photo(message: types.Message):
-    user_id = message.from_user.id
-    if message.forward_from or message.forward_from_chat or message.forward_date:
-        return
-    
-    caption = message.caption or ""
-    if caption:
-        title, content = parse_text(caption)
-        file = await bot.get_file(message.photo[-1].file_id)
-        file_path = f"temp_{user_id}.jpg"
-        await bot.download_file(file.file_path, file_path)
-        
-        user_data[user_id] = {
-            "photo": file_path,
-            "title": title,
-            "content": content,
-            "highlight_words": [],
-            "step": "waiting_highlight_words"
-        }
-        
-        await message.answer(
-            f"📝 Заголовок:\n{title}\n\n"
-            f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
-            f"Слова можно ввести через запятую или пробел.\n"
-            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
-            f"Если не хочешь выделять - отправь 'нет' или '-'"
-        )
-        return
-    
-    if user_id not in user_data:
-        user_data[user_id] = {"step": "waiting_photo"}
-    
-    file = await bot.get_file(message.photo[-1].file_id)
-    file_path = f"temp_{user_id}.jpg"
-    await bot.download_file(file.file_path, file_path)
-    user_data[user_id]["photo"] = file_path
-    user_data[user_id]["step"] = "waiting_title"
-    await message.answer("✅ Фото принято! Теперь отправь ЗАГОЛОВОК.")
-
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     from aiogram import executor
     
-    print("🚀 Бот запускается с ручным вводом слов для выделения...")
+    print("🚀 Бот запускается...")
+    print("⚠️ Убедитесь, что запущен только ОДИН экземпляр бота!")
     
     async def on_startup(dp):
         try:
+            # Удаляем вебхук перед запуском
             await bot.delete_webhook()
             print("✅ Вебхук удален")
         except Exception as e:
             print(f"⚠️ Ошибка удаления вебхука: {e}")
     
     try:
+        # Запускаем с очисткой предыдущих обновлений
         executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
     except Exception as e:
         print(f"❌ Ошибка при запуске: {e}")
