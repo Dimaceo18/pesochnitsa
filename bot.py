@@ -1,12 +1,12 @@
 import os
 import logging
 import re
-import random
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import InputFile
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 import textwrap
+import random
 
 # ========== КОНФИГ ==========
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -17,6 +17,7 @@ if not API_TOKEN:
 # Шрифты
 FONT_PATH_BOLD = "Inter-Bold.ttf"
 FONT_PATH_REG = "Inter-Regular.ttf"
+FONT_PATH_MEDIUM = "Inter-Medium.ttf"
 
 # Фоновое изображение
 BACKGROUND_IMAGE = "fon.png"
@@ -24,23 +25,34 @@ BACKGROUND_IMAGE = "fon.png"
 # Размеры сторис
 W, H = 1080, 1920
 
-# ОТСТУПЫ
-SIDE_MARGIN = 40
-PHOTO_HEIGHT = 667
-BORDER_SIZE = 8
-GAP_AFTER_PHOTO = 20
-GAP_AFTER_TITLE = 25
-GRAY_BLOCK_H = 60
+# ========== НОВЫЕ ОТСТУПЫ ДЛЯ ДИЗАЙНА ==========
+TOP_MARGIN = 50  # Отступ сверху
 
-# МЕЖСТРОЧНЫЙ ИНТЕРВАЛ (фиксированный)
-LINE_SPACING = 8
-PARAGRAPH_SPACING = 18
+# ФОТО
+PHOTO_TOP = 50
+PHOTO_HEIGHT = 710
+PHOTO_WIDTH = W - 80  # 1000px с отступами по 40px
+PHOTO_LEFT = 40
+PHOTO_RIGHT = W - 40
 
-# ДИАПАЗОНЫ РАЗМЕРОВ ШРИФТА
-MIN_TITLE_SIZE = 34
-MAX_TITLE_SIZE = 72
-MIN_CONTENT_SIZE = 20
-MAX_CONTENT_SIZE = 50  # Увеличил максимальный размер для малотекстовых постов
+# БЛОК "НОВОСТИ" (прямоугольник над фото)
+NEWS_BLOCK_TOP = PHOTO_TOP + PHOTO_HEIGHT + 25
+NEWS_BLOCK_HEIGHT = 70
+NEWS_BLOCK_LEFT = 40
+NEWS_BLOCK_RIGHT = W - 40
+
+# ЗАГОЛОВОК
+TITLE_TOP = NEWS_BLOCK_TOP + NEWS_BLOCK_HEIGHT + 30
+TITLE_MAX_WIDTH = W - 100
+
+# ФИОЛЕТОВАЯ ЛИНИЯ
+LINE_TOP = None  # Будет вычисляться динамически
+
+# ТЕКСТ НОВОСТИ
+TEXT_TOP_OFFSET = 35  # Отступ после линии
+
+# КНОПКА
+BUTTON_BOTTOM = 150  # Отступ от низа
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -102,16 +114,6 @@ def parse_text(text: str) -> tuple:
     
     return title, content
 
-# ========== ФОРМАТИРОВАНИЕ ТЕКСТА В АБЗАЦЫ ==========
-def format_paragraphs(text: str) -> list:
-    if not text:
-        return []
-    
-    paragraphs = text.split('\n\n')
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
-    
-    return paragraphs
-
 # ========== РЕТРО-ЭФФЕКТ ==========
 def apply_retro_effect(image: Image.Image) -> Image.Image:
     if image.mode != 'RGB':
@@ -155,7 +157,7 @@ def apply_retro_effect(image: Image.Image) -> Image.Image:
 
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
 async def generate_story(photo_path: str, title: str, content: str) -> str:
-    logging.info(f"🖼 Генерация сторис:")
+    logging.info(f"🖼 Генерация сторис в новом стиле:")
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
@@ -174,96 +176,101 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     draw = ImageDraw.Draw(canvas)
     
     # ============================================================
-    # ШАГ 2: ВСТАВЛЯЕМ ФОТО
+    # ШАГ 2: ЗАГРУЖАЕМ ШРИФТЫ
+    # ============================================================
+    try:
+        font_bold = ImageFont.truetype(FONT_PATH_BOLD, 60)
+        font_reg = ImageFont.truetype(FONT_PATH_REG, 40)
+        font_medium = ImageFont.truetype(FONT_PATH_MEDIUM, 40)
+    except:
+        font_bold = ImageFont.load_default()
+        font_reg = ImageFont.load_default()
+        font_medium = ImageFont.load_default()
+    
+    # ============================================================
+    # ШАГ 3: ВСТАВЛЯЕМ ФОТО (с отступами)
     # ============================================================
     photo = Image.open(photo_path).convert("RGB")
     
+    # Обрезаем фото до пропорций 1000x710
     photo_ratio = photo.width / photo.height
-    target_ratio = W / PHOTO_HEIGHT
+    target_ratio = PHOTO_WIDTH / PHOTO_HEIGHT
     
     if photo_ratio > target_ratio:
+        # Фото шире - обрезаем по бокам
         new_height = PHOTO_HEIGHT
         new_width = int(new_height * photo_ratio)
         photo = photo.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        left = (new_width - W) // 2
-        photo = photo.crop((left, 0, left + W, new_height))
+        left = (new_width - PHOTO_WIDTH) // 2
+        photo = photo.crop((left, 0, left + PHOTO_WIDTH, new_height))
     else:
-        new_width = W
+        # Фото выше - обрезаем сверху/снизу
+        new_width = PHOTO_WIDTH
         new_height = int(new_width / photo_ratio)
         photo = photo.resize((new_width, new_height), Image.Resampling.LANCZOS)
         top = (new_height - PHOTO_HEIGHT) // 2
         photo = photo.crop((0, top, new_width, top + PHOTO_HEIGHT))
     
+    # Применяем ретро-эффект
     photo = apply_retro_effect(photo)
     
-    bordered_photo = Image.new('RGB', (W, PHOTO_HEIGHT + BORDER_SIZE), color='white')
-    bordered_photo.paste(photo, (0, 0))
-    canvas.paste(bordered_photo, (0, 0))
+    # Вставляем фото с белой рамкой
+    bordered_photo = Image.new('RGB', (PHOTO_WIDTH + 4, PHOTO_HEIGHT + 4), color='white')
+    bordered_photo.paste(photo, (2, 2))
+    canvas.paste(bordered_photo, (PHOTO_LEFT, PHOTO_TOP))
     
     # ============================================================
-    # ШАГ 3: ЗАГРУЖАЕМ ШРИФТЫ (БАЗОВЫЕ)
+    # ШАГ 4: БЛОК "НОВОСТИ" (прямоугольник с текстом)
     # ============================================================
+    # Рисуем прямоугольник
+    draw.rectangle(
+        [NEWS_BLOCK_LEFT, NEWS_BLOCK_TOP, NEWS_BLOCK_RIGHT, NEWS_BLOCK_TOP + NEWS_BLOCK_HEIGHT],
+        fill='#2A2A2A',
+        outline='#6C3CE1',
+        width=2
+    )
+    
+    # Текст "НОВОСТИ" по центру прямоугольника
+    news_text = "НОВОСТИ"
     try:
-        font_bold_base = ImageFont.truetype(FONT_PATH_BOLD, 60)
+        news_font = ImageFont.truetype(FONT_PATH_BOLD, 32)
     except:
-        font_bold_base = ImageFont.load_default()
+        news_font = ImageFont.load_default()
     
-    try:
-        font_reg_base = ImageFont.truetype(FONT_PATH_REG, 40)
-    except:
-        font_reg_base = ImageFont.load_default()
+    news_bbox = draw.textbbox((0, 0), news_text, font=news_font)
+    news_w = news_bbox[2] - news_bbox[0]
+    news_h = news_bbox[3] - news_bbox[1]
     
-    # ============================================================
-    # ШАГ 4: ОПРЕДЕЛЯЕМ ДОСТУПНОЕ ПРОСТРАНСТВО ДЛЯ ТЕКСТА
-    # ============================================================
-    title_start_y = PHOTO_HEIGHT + BORDER_SIZE + GAP_AFTER_PHOTO
-    AVAILABLE_HEIGHT = H - title_start_y - GRAY_BLOCK_H - 20
-    MAX_TEXT_W = W - (SIDE_MARGIN * 2)
+    news_x = (W - news_w) // 2
+    news_y = NEWS_BLOCK_TOP + (NEWS_BLOCK_HEIGHT - news_h) // 2
+    draw.text((news_x, news_y), news_text, font=news_font, fill='white')
     
     # ============================================================
-    # ШАГ 5: АДАПТИВНЫЙ ПОДБОР РАЗМЕРА ШРИФТА ДЛЯ ЗАГОЛОВКА
+    # ШАГ 5: ЗАГОЛОВОК (адаптивный размер)
     # ============================================================
-    def fit_title(text, max_width, available_height):
-        for size in range(MAX_TITLE_SIZE, MIN_TITLE_SIZE - 1, -2):
-            try:
-                font = ImageFont.truetype(FONT_PATH_BOLD, size)
-            except:
-                font = ImageFont.load_default()
-            
-            words = text.upper().split()
-            lines = []
-            current_line = []
-            for word in words:
-                test_line = ' '.join(current_line + [word])
-                bbox = draw.textbbox((0, 0), test_line, font=font)
-                if bbox[2] - bbox[0] <= max_width:
-                    current_line.append(word)
-                else:
-                    if current_line:
-                        lines.append(' '.join(current_line))
-                    current_line = [word]
-            if current_line:
-                lines.append(' '.join(current_line))
-            
-            if 1 <= len(lines) <= 3:
-                test_text = "\n".join(lines)
-                bbox = draw.textbbox((0, 0), test_text, font=font)
-                title_h = bbox[3] - bbox[1]
-                
-                if title_h <= available_height * 0.35:
-                    return font, lines, size
-        
+    # Определяем доступное место для заголовка
+    title_y = TITLE_TOP
+    max_title_height = 200  # Максимальная высота для заголовка
+    
+    # Подбираем размер для заголовка
+    title_font_size = 56
+    title_lines = []
+    
+    for size in range(72, 32, -2):
         try:
-            font = ImageFont.truetype(FONT_PATH_BOLD, MIN_TITLE_SIZE)
+            test_font = ImageFont.truetype(FONT_PATH_BOLD, size)
         except:
-            font = ImageFont.load_default()
-        words = text.upper().split()
+            test_font = ImageFont.load_default()
+        
+        # Разбиваем на строки
+        words = title.upper().split()
         lines = []
         current_line = []
+        
         for word in words:
             test_line = ' '.join(current_line + [word])
-            bbox = draw.textbbox((0, 0), test_line, font=font)
-            if bbox[2] - bbox[0] <= max_width:
+            bbox = draw.textbbox((0, 0), test_line, font=test_font)
+            if bbox[2] - bbox[0] <= TITLE_MAX_WIDTH:
                 current_line.append(word)
             else:
                 if current_line:
@@ -271,139 +278,187 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 current_line = [word]
         if current_line:
             lines.append(' '.join(current_line))
-        return font, lines, MIN_TITLE_SIZE
-    
-    # ============================================================
-    # ШАГ 6: АДАПТИВНЫЙ ПОДБОР РАЗМЕРА ШРИФТА ДЛЯ ОСНОВНОГО ТЕКСТА
-    # ============================================================
-    def fit_content(paragraphs_list, max_width, available_height, title_height):
-        """Подбирает размер шрифта для основного текста.
-        Если текста мало - увеличиваем размер шрифта (до MAX_CONTENT_SIZE).
-        Межстрочный интервал и отступы между абзацами фиксированы.
-        """
-        remaining_height = available_height - title_height - GAP_AFTER_TITLE
         
-        # Пробуем размер от максимального к минимальному
-        for size in range(MAX_CONTENT_SIZE, MIN_CONTENT_SIZE - 1, -2):
-            try:
-                font = ImageFont.truetype(FONT_PATH_REG, size)
-            except:
-                font = ImageFont.load_default()
-            
-            single_bbox = draw.textbbox((0, 0), "A", font=font)
-            single_h = single_bbox[3] - single_bbox[1]
-            
-            wrapped_paragraphs = []
-            total_height = 0
-            
-            for para in paragraphs_list:
-                chars_per_line = int(max_width / (size * 0.6))
-                wrapped = textwrap.wrap(para, width=chars_per_line)
-                if not wrapped:
-                    wrapped = [para]
-                wrapped_paragraphs.append(wrapped)
-                
-                # Используем ФИКСИРОВАННЫЙ межстрочный интервал
-                para_height = len(wrapped) * single_h + LINE_SPACING * (len(wrapped) - 1)
-                total_height += para_height
-                total_height += PARAGRAPH_SPACING  # Фиксированный отступ между абзацами
-            
-            # Если текст помещается - используем этот размер
-            if total_height <= remaining_height:
-                return font, wrapped_paragraphs, single_h, size
+        # Проверяем высоту
+        test_text = "\n".join(lines)
+        bbox = draw.textbbox((0, 0), test_text, font=test_font)
+        title_h = bbox[3] - bbox[1]
         
+        if title_h <= max_title_height and len(lines) <= 3:
+            title_font_size = size
+            title_lines = lines
+            break
+    else:
         # Если ничего не подошло - минимальный размер
         try:
-            font = ImageFont.truetype(FONT_PATH_REG, MIN_CONTENT_SIZE)
+            title_font = ImageFont.truetype(FONT_PATH_BOLD, 32)
         except:
-            font = ImageFont.load_default()
-        single_bbox = draw.textbbox((0, 0), "A", font=font)
+            title_font = ImageFont.load_default()
+        words = title.upper().split()
+        lines = []
+        current_line = []
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            bbox = draw.textbbox((0, 0), test_line, font=title_font)
+            if bbox[2] - bbox[0] <= TITLE_MAX_WIDTH:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        if current_line:
+            lines.append(' '.join(current_line))
+        title_lines = lines
+        title_font_size = 32
+    
+    # Рисуем заголовок
+    try:
+        title_font = ImageFont.truetype(FONT_PATH_BOLD, title_font_size)
+    except:
+        title_font = ImageFont.load_default()
+    
+    title_text = "\n".join(title_lines)
+    draw.text((50, title_y), title_text, font=title_font, fill='white')
+    
+    # Вычисляем высоту заголовка
+    title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
+    title_height = title_bbox[3] - title_bbox[1]
+    title_end_y = title_y + title_height
+    
+    logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
+    
+    # ============================================================
+    # ШАГ 6: ФИОЛЕТОВАЯ ЛИНИЯ
+    # ============================================================
+    LINE_TOP = title_end_y + 15
+    LINE_HEIGHT = 3
+    draw.rectangle(
+        [50, LINE_TOP, W - 50, LINE_TOP + LINE_HEIGHT],
+        fill='#6C3CE1'
+    )
+    
+    # ============================================================
+    # ШАГ 7: ТЕКСТ НОВОСТИ (адаптивный размер)
+    # ============================================================
+    text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
+    
+    # Доступное пространство для текста (до кнопки)
+    button_y = H - BUTTON_BOTTOM - 50  # Место для кнопки
+    available_text_height = button_y - text_y - 50
+    
+    # Парсим контент на абзацы
+    if content and content != "Текст отсутствует":
+        paragraphs = content.split('\n\n')
+        paragraphs = [p.strip() for p in paragraphs if p.strip()]
+    else:
+        paragraphs = ["Текст отсутствует"]
+    
+    # Подбираем размер шрифта для текста
+    text_font_size = 34
+    wrapped_paragraphs = []
+    
+    for size in range(42, 20, -2):
+        try:
+            test_font = ImageFont.truetype(FONT_PATH_REG, size)
+        except:
+            test_font = ImageFont.load_default()
+        
+        # Вычисляем высоту текста
+        single_bbox = draw.textbbox((0, 0), "A", font=test_font)
         single_h = single_bbox[3] - single_bbox[1]
-        wrapped_paragraphs = []
-        for para in paragraphs_list:
-            chars_per_line = int(max_width / (MIN_CONTENT_SIZE * 0.6))
+        
+        total_height = 0
+        temp_wrapped = []
+        
+        for para in paragraphs:
+            chars_per_line = int((W - 100) / (size * 0.6))
+            wrapped = textwrap.wrap(para, width=chars_per_line)
+            if not wrapped:
+                wrapped = [para]
+            temp_wrapped.append(wrapped)
+            
+            para_height = len(wrapped) * (single_h + 6)  # Межстрочный интервал 6px
+            total_height += para_height + 15  # Отступ между абзацами 15px
+        
+        if total_height <= available_text_height:
+            text_font_size = size
+            wrapped_paragraphs = temp_wrapped
+            break
+    else:
+        # Минимальный размер
+        try:
+            text_font = ImageFont.truetype(FONT_PATH_REG, 20)
+        except:
+            text_font = ImageFont.load_default()
+        single_bbox = draw.textbbox((0, 0), "A", font=text_font)
+        single_h = single_bbox[3] - single_bbox[1]
+        
+        for para in paragraphs:
+            chars_per_line = int((W - 100) / (20 * 0.6))
             wrapped = textwrap.wrap(para, width=chars_per_line)
             if not wrapped:
                 wrapped = [para]
             wrapped_paragraphs.append(wrapped)
-        return font, wrapped_paragraphs, single_h, MIN_CONTENT_SIZE
+        text_font_size = 20
     
-    # ============================================================
-    # ШАГ 7: РИСУЕМ ЗАГОЛОВОК
-    # ============================================================
-    title_y = title_start_y
-    
-    if title:
-        title_font, title_lines, title_size = fit_title(title, MAX_TEXT_W, AVAILABLE_HEIGHT)
-        title_text = "\n".join(title_lines)
-        
-        draw.text((SIDE_MARGIN, title_y), title_text, font=title_font, fill='white')
-        
-        title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
-        title_height = title_bbox[3] - title_bbox[1]
-        title_end_y = title_y + title_height
-        
-        logging.info(f"📐 Размер заголовка: {title_size}px, строк: {len(title_lines)}")
-        
-        # ============================================================
-        # ШАГ 8: РИСУЕМ ОСНОВНОЙ ТЕКСТ (с фиксированным межстрочным интервалом)
-        # ============================================================
-        if content and content != "Текст отсутствует":
-            logging.info(f"📄 Рисуем основной текст, длина: {len(content)} символов")
-            
-            paragraphs = format_paragraphs(content)
-            logging.info(f"   Найдено {len(paragraphs)} абзацев")
-            
-            text_y = title_end_y + GAP_AFTER_TITLE
-            content_font, wrapped_paragraphs, single_h, content_size = fit_content(
-                paragraphs, MAX_TEXT_W, AVAILABLE_HEIGHT, title_height
-            )
-            
-            logging.info(f"📐 Размер основного текста: {content_size}px")
-            logging.info(f"   Межстрочный интервал: {LINE_SPACING}px (фиксированный)")
-            logging.info(f"   Отступ между абзацами: {PARAGRAPH_SPACING}px (фиксированный)")
-            
-            # Рисуем текст с фиксированными отступами
-            pos_y = text_y
-            
-            for para_idx, para_lines in enumerate(wrapped_paragraphs):
-                for line in para_lines:
-                    line_x = SIDE_MARGIN
-                    draw.text((line_x, pos_y), line, font=content_font, fill='white')
-                    pos_y += single_h + LINE_SPACING  # Фиксированный межстрочный интервал
-                
-                pos_y += PARAGRAPH_SPACING  # Фиксированный отступ между абзацами
-                logging.info(f"   Абзац {para_idx + 1} нарисован")
-            
-            logging.info(f"✅ Основной текст нарисован, размер: {content_size}px")
-        else:
-            logging.warning(f"⚠️ Основной текст ПУСТОЙ")
-    
-    # ============================================================
-    # ШАГ 9: РИСУЕМ НИЖНИЙ БЛОК
-    # ============================================================
-    GRAY_BLOCK_Y = H - GRAY_BLOCK_H
-    draw.rectangle([0, GRAY_BLOCK_Y, W, H], fill='#2A2A2A')
-    
+    # Рисуем текст
     try:
-        footer_font = ImageFont.truetype(FONT_PATH_BOLD, 28)
+        text_font = ImageFont.truetype(FONT_PATH_REG, text_font_size)
     except:
-        footer_font = ImageFont.load_default()
+        text_font = ImageFont.load_default()
     
-    footer_text = "ВСЕГДА СВЕЖИЕ НОВОСТИ"
-    footer_bbox = draw.textbbox((0, 0), footer_text, font=footer_font)
-    footer_w = footer_bbox[2] - footer_bbox[0]
-    footer_h = footer_bbox[3] - footer_bbox[1]
+    single_bbox = draw.textbbox((0, 0), "A", font=text_font)
+    single_h = single_bbox[3] - single_bbox[1]
     
-    footer_x = (W - footer_w) // 2
-    footer_y = GRAY_BLOCK_Y + (GRAY_BLOCK_H - footer_h) // 2
-    draw.text((footer_x, footer_y), footer_text, font=footer_font, fill='white')
+    pos_y = text_y
+    for para_idx, para_lines in enumerate(wrapped_paragraphs):
+        for line in para_lines:
+            draw.text((50, pos_y), line, font=text_font, fill='white')
+            pos_y += single_h + 6  # Межстрочный интервал
+        pos_y += 15  # Отступ между абзацами
+    
+    logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 10: СОХРАНЯЕМ
+    # ШАГ 8: КНОПКА "ЧИТАТЬ ПОЛНОСТЬЮ НА САЙТЕ"
+    # ============================================================
+    button_text = "ЧИТАТЬ ПОЛНОСТЬЮ НА САЙТЕ"
+    try:
+        button_font = ImageFont.truetype(FONT_PATH_MEDIUM, 28)
+    except:
+        button_font = ImageFont.load_default()
+    
+    button_bbox = draw.textbbox((0, 0), button_text, font=button_font)
+    button_w = button_bbox[2] - button_bbox[0]
+    button_h = button_bbox[3] - button_bbox[1]
+    
+    # Прямоугольник кнопки
+    button_padding_x = 40
+    button_padding_y = 20
+    button_x1 = (W - button_w - button_padding_x * 2) // 2
+    button_y1 = H - BUTTON_BOTTOM - button_h - button_padding_y * 2
+    button_x2 = button_x1 + button_w + button_padding_x * 2
+    button_y2 = button_y1 + button_h + button_padding_y * 2
+    
+    # Рисуем кнопку
+    draw.rectangle(
+        [button_x1, button_y1, button_x2, button_y2],
+        fill='#6C3CE1',
+        outline='#6C3CE1',
+        width=2
+    )
+    
+    # Текст кнопки по центру
+    button_text_x = (W - button_w) // 2
+    button_text_y = button_y1 + (button_y2 - button_y1 - button_h) // 2
+    draw.text((button_text_x, button_text_y), button_text, font=button_font, fill='white')
+    
+    # ============================================================
+    # ШАГ 9: СОХРАНЯЕМ
     # ============================================================
     output_path = "output_story.png"
     canvas.save(output_path, "PNG")
+    logging.info(f"✅ Сторис сохранена: {output_path}")
     return output_path
 
 # ========== ОБЩАЯ ФУНКЦИЯ ==========
@@ -431,9 +486,9 @@ user_data = {}
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     await message.answer(
-        "📱 Привет! Я делаю ретро-сторис!\n\n"
+        "📱 Привет! Я делаю стильные сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста с фото и текстом.\n"
-        "Размер шрифта подбирается автоматически!"
+        "Дизайн автоматически подстроится под твой контент!"
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
 
@@ -483,7 +538,7 @@ async def handle_forward(message: types.Message):
     if not content:
         content = "Текст отсутствует"
     
-    await message.answer(f"⏳ Генерирую ретро-сторис...")
+    await message.answer(f"⏳ Генерирую стильную сторис...")
     await process_story(user_id, photo_file_path, title, content, message)
     
     if user_id in user_data:
@@ -548,7 +603,7 @@ if __name__ == "__main__":
     import asyncio
     from aiogram import executor
     
-    print("🚀 Бот запускается с адаптивным размером шрифта...")
+    print("🚀 Бот запускается в новом стиле...")
     
     async def delete_webhook():
         try:
