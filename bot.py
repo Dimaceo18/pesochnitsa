@@ -170,7 +170,7 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
 
 # ========== РИСОВАНИЕ ЗАГОЛОВКА С ВЫДЕЛЕНИЕМ ==========
 def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width, font_size):
-    """Рисует заголовок с выделенными словами фиолетовым цветом (сохраняет оригинальный регистр)"""
+    """Рисует заголовок с выделенными словами фиолетовым цветом"""
     title_font = load_font(font_size, 'bold')
     purple_font = load_font(font_size, 'bold')
     
@@ -314,20 +314,18 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
     
     # ============================================================
-    # ШАГ 4: ЗАГОЛОВОК С ВЫДЕЛЕНИЕМ (оригинальный регистр)
+    # ШАГ 4: ЗАГОЛОВОК С ВЫДЕЛЕНИЕМ
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 240
     
-    # Подбираем размер шрифта для заголовка
     title_font_size = 56
     
-    # Проверяем на оригинальном тексте (не в верхнем регистре)
+    # Подбираем размер шрифта (используем оригинальный текст)
     for size in range(72, 32, -2):
         test_font = load_font(size, 'bold')
-        test_words = title.split()  # Сохраняем оригинальный регистр
+        test_words = title.split()
         
-        # Проверяем, помещается ли заголовок в ширину
         total_width = 0
         for word in test_words:
             word_bbox = draw.textbbox((0, 0), word, font=test_font)
@@ -347,10 +345,10 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
                 title_font_size = size
                 break
     
-    # Рисуем заголовок с выделением (сохраняем оригинальный регистр)
+    # Рисуем заголовок с выделением
     title_end_y = draw_title_with_highlight(
         draw, 
-        title,  # Передаем оригинальный текст
+        title, 
         highlight_words, 
         50, 
         title_y, 
@@ -478,7 +476,7 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
         await message.answer(f"❌ Ошибка: {str(e)}")
         return False
 
-# ========== КЛАВИАТУРА ДЛЯ РУБРИК ==========
+# ========== КЛАВИАТУРЫ ==========
 def get_rubric_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=3)
     buttons = []
@@ -547,7 +545,6 @@ async def handle_photo_or_document(message: types.Message):
         if not content:
             content = "Текст отсутствует"
         
-        # Сохраняем данные
         user_data[user_id] = {
             "photo": photo_file_path,
             "title": title,
@@ -605,11 +602,9 @@ async def handle_photo_or_document(message: types.Message):
 async def handle_text(message: types.Message):
     user_id = message.from_user.id
     
-    # Пропускаем команды
     if message.text.startswith('/'):
         return
     
-    # Если пользователь не в базе - отправляем старт
     if user_id not in user_data:
         await start(message)
         return
@@ -642,17 +637,14 @@ async def handle_text(message: types.Message):
     if step == "waiting_highlight_words":
         text = message.text.strip()
         
-        # Если пользователь не хочет выделять слова
         if text.lower() in ['нет', '-', 'без', 'none', 'skip', 'не надо']:
             user_data[user_id]["highlight_words"] = []
         else:
-            # Разбиваем на слова по запятой или пробелу
             if ',' in text:
                 words = [w.strip() for w in text.split(',') if w.strip()]
             else:
                 words = text.split()
             
-            # Оставляем только слова длиной > 2 символов
             words = [w for w in words if len(w) > 2]
             user_data[user_id]["highlight_words"] = words
         
@@ -666,7 +658,6 @@ async def handle_text(message: types.Message):
         )
         return
     
-    # Если пришло текстовое сообщение на другом шаге
     await message.answer(
         "❓ Я не понял. Пожалуйста, следуй инструкциям.\n"
         "Если хочешь начать заново - отправь /start"
