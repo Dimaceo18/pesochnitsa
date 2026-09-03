@@ -504,7 +504,12 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
     rubric = callback_query.data.replace('rubric_', '')
     
-    if user_id not in user_data or user_data[user_id].get("step") != "waiting_rubric":
+    if user_id not in user_data:
+        await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
+        return
+    
+    step = user_data[user_id].get("step", "")
+    if step != "waiting_rubric":
         await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
         return
     
@@ -584,20 +589,27 @@ async def handle_forward(message: types.Message):
         f"📝 Заголовок:\n{title}\n\n"
         f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
         f"Слова можно ввести через запятую или пробел.\n"
-        f"Например: {', '.join(title.split()[:3])}\n\n"
+        f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
         f"Если не хочешь выделять - отправь 'нет' или '-'"
     )
 
+# ========== ОБРАБОТКА ТЕКСТОВЫХ СООБЩЕНИЙ ==========
 @dp.message_handler(content_types=['text'])
-async def handle_highlight_words(message: types.Message):
+async def handle_text_messages(message: types.Message):
     user_id = message.from_user.id
     
+    # Пропускаем команды
+    if message.text.startswith('/'):
+        return
+    
+    # Если пользователь не в базе - отправляем старт
     if user_id not in user_data:
         await start(message)
         return
     
     step = user_data[user_id].get("step", "")
     
+    # Обработка ввода слов для выделения
     if step == "waiting_highlight_words":
         text = message.text.strip()
         
@@ -606,7 +618,6 @@ async def handle_highlight_words(message: types.Message):
             user_data[user_id]["highlight_words"] = []
         else:
             # Разбиваем на слова по запятой или пробелу
-            # Сначала пробуем разделить по запятой
             if ',' in text:
                 words = [w.strip() for w in text.split(',') if w.strip()]
             else:
@@ -626,12 +637,14 @@ async def handle_highlight_words(message: types.Message):
         )
         return
     
-    # Для ручного ввода через фото
+    # Ручной ввод через фото (без репоста)
     if step == "waiting_title":
         user_data[user_id]["title"] = message.text
         user_data[user_id]["step"] = "waiting_content"
         await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
-    elif step == "waiting_content":
+        return
+    
+    if step == "waiting_content":
         user_data[user_id]["content"] = message.text
         title = user_data[user_id]["title"]
         
@@ -639,10 +652,17 @@ async def handle_highlight_words(message: types.Message):
             f"📝 Заголовок:\n{title}\n\n"
             f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
             f"Слова можно ввести через запятую или пробел.\n"
-            f"Например: {', '.join(title.split()[:3])}\n\n"
+            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
             f"Если не хочешь выделять - отправь 'нет' или '-'"
         )
         user_data[user_id]["step"] = "waiting_highlight_words"
+        return
+    
+    # Если пришло текстовое сообщение на другом шаге
+    await message.answer(
+        "❓ Я не понял. Пожалуйста, следуй инструкциям.\n"
+        "Если хочешь начать заново - отправь /start"
+    )
 
 # ========== РУЧНОЙ ВВОД ==========
 @dp.message_handler(content_types=['photo'])
@@ -670,7 +690,7 @@ async def handle_photo(message: types.Message):
             f"📝 Заголовок:\n{title}\n\n"
             f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
             f"Слова можно ввести через запятую или пробел.\n"
-            f"Например: {', '.join(title.split()[:3])}\n\n"
+            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
             f"Если не хочешь выделять - отправь 'нет' или '-'"
         )
         return
