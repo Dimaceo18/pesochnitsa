@@ -46,7 +46,7 @@ RUBRIC_PADDING_Y = 12
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
 TITLE_MAX_WIDTH = W - 100
 
-# ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
+# ФИОЛЕТОВАЯ ЛИНИЯ
 LINE_TOP_OFFSET = 20
 LINE_HEIGHT = 8
 
@@ -168,11 +168,80 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
     
     return noisy_image
 
+# ========== РИСОВАНИЕ ЗАГОЛОВКА С ВЫДЕЛЕНИЕМ ==========
+def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width, font_size):
+    """Рисует заголовок с выделенными словами фиолетовым цветом"""
+    title_font = load_font(font_size, 'bold')
+    purple_font = load_font(font_size, 'bold')
+    
+    # Разбиваем заголовок на слова
+    words = title_text.split()
+    
+    # Создаем список для хранения строк
+    lines = []
+    current_line = []
+    current_line_width = 0
+    
+    # Разбиваем на строки по ширине
+    for word in words:
+        # Проверяем, не является ли слово выделенным
+        is_highlighted = word.upper() in [w.upper() for w in highlight_words]
+        test_font = purple_font if is_highlighted else title_font
+        word_bbox = draw.textbbox((0, 0), word, font=test_font)
+        word_width = word_bbox[2] - word_bbox[0]
+        
+        # Добавляем пробел перед словом (кроме первого)
+        space_width = 0
+        if current_line:
+            space_bbox = draw.textbbox((0, 0), " ", font=test_font)
+            space_width = space_bbox[2] - space_bbox[0]
+        
+        if current_line_width + space_width + word_width <= max_width:
+            if current_line:
+                current_line_width += space_width
+            current_line.append((word, is_highlighted))
+            current_line_width += word_width
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = [(word, is_highlighted)]
+            current_line_width = word_width
+    
+    if current_line:
+        lines.append(current_line)
+    
+    # Рисуем строки
+    current_y = y
+    for line in lines:
+        current_x = x
+        for word, is_highlighted in line:
+            font = purple_font if is_highlighted else title_font
+            color = '#6C3CE1' if is_highlighted else 'black'
+            draw.text((current_x, current_y), word, font=font, fill=color)
+            
+            word_bbox = draw.textbbox((0, 0), word, font=font)
+            word_width = word_bbox[2] - word_bbox[0]
+            current_x += word_width
+            
+            # Добавляем пробел после слова (кроме последнего)
+            if word != line[-1][0]:
+                space_bbox = draw.textbbox((0, 0), " ", font=font)
+                space_width = space_bbox[2] - space_bbox[0]
+                current_x += space_width
+        
+        # Высота строки
+        line_bbox = draw.textbbox((0, 0), "A", font=title_font)
+        line_height = line_bbox[3] - line_bbox[1]
+        current_y += line_height + 8  # Межстрочный интервал
+    
+    return current_y
+
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
-async def generate_story(photo_path: str, title: str, content: str, rubric: str) -> str:
+async def generate_story(photo_path: str, title: str, content: str, rubric: str, highlight_words: list) -> str:
     logging.info(f"🖼 Генерация сторис:")
     logging.info(f"   Рубрика: {rubric}")
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
+    logging.info(f"   Выделенные слова: {highlight_words}")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
     # ============================================================
@@ -204,10 +273,8 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
                 top = (new_height - PHOTO_HEIGHT) // 2
                 photo = photo.crop((0, top, new_width, top + PHOTO_HEIGHT))
             
-            # Применяем эффекты
             photo = apply_photo_effect(photo)
             
-            # Вставляем фото с серой рамкой
             bordered_photo = Image.new('RGB', (PHOTO_WIDTH + 4, PHOTO_HEIGHT + 4), color='#e0e0e0')
             bordered_photo.paste(photo, (2, 2))
             canvas.paste(bordered_photo, (PHOTO_LEFT, PHOTO_TOP))
@@ -221,7 +288,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
                  "📷 ФОТО", font=load_font(36, 'bold'), fill='#999999')
     
     # ============================================================
-    # ШАГ 3: РУБРИКА (текст чуть выше центра)
+    # ШАГ 3: РУБРИКА
     # ============================================================
     rubric_font = load_font(34, 'bold')
     rubric_bbox = draw.textbbox((0, 0), rubric, font=rubric_font)
@@ -240,81 +307,61 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
         width=2
     )
     
-    # Текст чуть выше центра (смещение вверх на 4px)
     rub_text_x = rub_x1 + (rub_x2 - rub_x1 - rubric_w) // 2
     rub_text_y = rub_y1 + (rub_y2 - rub_y1 - rubric_h) // 2 - 4
     draw.text((rub_text_x, rub_text_y), rubric, font=rubric_font, fill='white')
     
-    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото (текст чуть выше центра)")
+    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
     
     # ============================================================
-    # ШАГ 4: ЗАГОЛОВОК
+    # ШАГ 4: ЗАГОЛОВОК С ВЫДЕЛЕНИЕМ
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 240
     
+    # Подбираем размер шрифта для заголовка
     title_font_size = 56
-    title_lines = []
     
     for size in range(72, 32, -2):
         test_font = load_font(size, 'bold')
+        test_words = title.upper().split()
         
-        words = title.upper().split()
-        lines = []
-        current_line = []
+        # Проверяем, помещается ли заголовок в ширину
+        total_width = 0
+        for word in test_words:
+            word_bbox = draw.textbbox((0, 0), word, font=test_font)
+            total_width += word_bbox[2] - word_bbox[0]
+            total_width += 10  # пробел
         
-        for word in words:
-            test_line = ' '.join(current_line + [word])
-            bbox = draw.textbbox((0, 0), test_line, font=test_font)
-            if bbox[2] - bbox[0] <= TITLE_MAX_WIDTH:
-                current_line.append(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                current_line = [word]
-        if current_line:
-            lines.append(' '.join(current_line))
-        
-        if lines:
-            test_text = "\n".join(lines)
+        if total_width <= TITLE_MAX_WIDTH * 2:  # максимум 2 строки
+            # Проверяем высоту
+            lines_count = 1
+            if total_width > TITLE_MAX_WIDTH:
+                lines_count = 2
+            
+            test_text = "\n".join(["A"] * lines_count)
             bbox = draw.textbbox((0, 0), test_text, font=test_font)
             title_h = bbox[3] - bbox[1]
             
-            if title_h <= max_title_height and len(lines) <= 3:
+            if title_h <= max_title_height:
                 title_font_size = size
-                title_lines = lines
                 break
-    else:
-        title_font = load_font(32, 'bold')
-        words = title.upper().split()
-        lines = []
-        current_line = []
-        for word in words:
-            test_line = ' '.join(current_line + [word])
-            bbox = draw.textbbox((0, 0), test_line, font=title_font)
-            if bbox[2] - bbox[0] <= TITLE_MAX_WIDTH:
-                current_line.append(word)
-            else:
-                if current_line:
-                    lines.append(' '.join(current_line))
-                current_line = [word]
-        if current_line:
-            lines.append(' '.join(current_line))
-        title_lines = lines
-        title_font_size = 32
     
-    title_font = load_font(title_font_size, 'bold')
-    title_text = "\n".join(title_lines)
-    draw.text((50, title_y), title_text, font=title_font, fill='black')
+    # Рисуем заголовок с выделением
+    title_end_y = draw_title_with_highlight(
+        draw, 
+        title, 
+        highlight_words, 
+        50, 
+        title_y, 
+        TITLE_MAX_WIDTH, 
+        title_font_size
+    )
     
-    title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
-    title_height = title_bbox[3] - title_bbox[1]
-    title_end_y = title_y + title_height
-    
-    logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
+    logging.info(f"📐 Размер заголовка: {title_font_size}px, выделенных слов: {len(highlight_words)}")
     
     # ============================================================
-    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
+    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ
     # ============================================================
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
     draw.rectangle(
@@ -327,7 +374,6 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
     # ============================================================
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     
-    # Доступное пространство для текста до низа
     available_text_height = H - text_y - 50
     
     if content and content != "Текст отсутствует":
@@ -408,9 +454,9 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
         return output_path
 
 # ========== ОБЩАЯ ФУНКЦИЯ ==========
-async def process_story(user_id: int, photo_path: str, title: str, content: str, rubric: str, message: types.Message):
+async def process_story(user_id: int, photo_path: str, title: str, content: str, rubric: str, highlight_words: list, message: types.Message):
     try:
-        output = await generate_story(photo_path, title, content, rubric)
+        output = await generate_story(photo_path, title, content, rubric, highlight_words)
         
         with open(output, 'rb') as photo_file:
             await bot.send_photo(
@@ -432,13 +478,23 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
         await message.answer(f"❌ Ошибка: {str(e)}")
         return False
 
-# ========== КЛАВИАТУРА ДЛЯ ВЫБОРА РУБРИКИ ==========
+# ========== КЛАВИАТУРЫ ==========
 def get_rubric_keyboard():
     keyboard = InlineKeyboardMarkup(row_width=3)
     buttons = []
     for rubric in RUBRICS:
         buttons.append(InlineKeyboardButton(rubric, callback_data=f"rubric_{rubric}"))
     keyboard.add(*buttons)
+    return keyboard
+
+def get_highlight_keyboard(words):
+    """Создает клавиатуру для выбора слов для выделения"""
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    buttons = []
+    for word in words[:10]:  # Максимум 10 слов для выбора
+        buttons.append(InlineKeyboardButton(f"💜 {word}", callback_data=f"highlight_{word}"))
+    keyboard.add(*buttons)
+    keyboard.add(InlineKeyboardButton("✅ ПРОДОЛЖИТЬ БЕЗ ВЫДЕЛЕНИЯ", callback_data="highlight_none"))
     return keyboard
 
 # ========== ХЕНДЛЕРЫ ==========
@@ -449,9 +505,71 @@ async def start(message: types.Message):
     await message.answer(
         "📱 Привет! Я делаю стильные сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста с фото и текстом.\n"
-        "Я спрошу рубрику, и создам красивую сторис!"
+        "Я покажу слова для выделения, затем спрошу рубрику!"
     )
     user_data[message.from_user.id] = {"step": "waiting_photo"}
+
+@dp.callback_query_handler(lambda c: c.data.startswith('highlight_'))
+async def process_highlight_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    data = callback_query.data.replace('highlight_', '')
+    
+    if user_id not in user_data or user_data[user_id].get("step") != "waiting_highlight":
+        await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
+        return
+    
+    if data == "none":
+        # Без выделения
+        user_data[user_id]["highlight_words"] = []
+        user_data[user_id]["step"] = "waiting_rubric"
+        
+        await callback_query.answer("✅ Продолжаем без выделения")
+        
+        await callback_query.message.edit_text(
+            "📌 Выберите рубрику для этой статьи:",
+            reply_markup=get_rubric_keyboard()
+        )
+    else:
+        # Добавляем слово в список выделенных
+        if "highlight_words" not in user_data[user_id]:
+            user_data[user_id]["highlight_words"] = []
+        
+        if data not in user_data[user_id]["highlight_words"]:
+            user_data[user_id]["highlight_words"].append(data)
+            await callback_query.answer(f"✅ Слово '{data}' будет выделено фиолетовым")
+        else:
+            # Убираем слово из выделенных
+            user_data[user_id]["highlight_words"].remove(data)
+            await callback_query.answer(f"❌ Слово '{data}' больше не выделяется")
+        
+        # Обновляем клавиатуру
+        words = user_data[user_id]["words_for_highlight"]
+        keyboard = get_highlight_keyboard(words)
+        # Добавляем кнопку завершения
+        keyboard.add(InlineKeyboardButton("✅ ГОТОВО, ВЫБРАТЬ РУБРИКУ", callback_data="highlight_done"))
+        
+        await callback_query.message.edit_text(
+            f"📝 Выберите слова для выделения фиолетовым:\n\n"
+            f"Выделенные слова: {', '.join(user_data[user_id]['highlight_words']) if user_data[user_id]['highlight_words'] else 'Нет'}\n\n"
+            f"Нажмите на слово - оно выделится. Нажмите еще раз - уберется.",
+            reply_markup=keyboard
+        )
+
+@dp.callback_query_handler(lambda c: c.data == 'highlight_done')
+async def process_highlight_done(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    
+    if user_id not in user_data or user_data[user_id].get("step") != "waiting_highlight":
+        await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
+        return
+    
+    user_data[user_id]["step"] = "waiting_rubric"
+    await callback_query.answer("✅ Переход к выбору рубрики")
+    
+    await callback_query.message.edit_text(
+        "📌 Выберите рубрику для этой статьи:",
+        reply_markup=get_rubric_keyboard()
+    )
 
 @dp.callback_query_handler(lambda c: c.data.startswith('rubric_'))
 async def process_rubric_callback(callback_query: types.CallbackQuery):
@@ -470,9 +588,10 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
     photo_path = user_data[user_id]["photo"]
     title = user_data[user_id]["title"]
     content = user_data[user_id]["content"]
+    highlight_words = user_data[user_id].get("highlight_words", [])
     
-    await callback_query.message.answer(f"⏳ Генерирую сторис с рубрикой '{rubric}'...")
-    await process_story(user_id, photo_path, title, content, rubric, callback_query.message)
+    await callback_query.message.edit_text(f"⏳ Генерирую сторис с рубрикой '{rubric}'...")
+    await process_story(user_id, photo_path, title, content, rubric, highlight_words, callback_query.message)
     
     if user_id in user_data:
         del user_data[user_id]
@@ -524,17 +643,34 @@ async def handle_forward(message: types.Message):
     if not content:
         content = "Текст отсутствует"
     
+    # Извлекаем слова для выделения (уникальные слова длиной > 3 символов)
+    words = re.findall(r'[А-Яа-ЯA-Za-z]{4,}', title.upper())
+    unique_words = list(dict.fromkeys(words))[:10]  # Максимум 10 уникальных слов
+    
+    # Сохраняем данные
     user_data[user_id] = {
         "photo": photo_file_path,
         "title": title,
         "content": content,
-        "step": "waiting_rubric"
+        "words_for_highlight": unique_words,
+        "highlight_words": [],
+        "step": "waiting_highlight"
     }
     
-    await message.answer(
-        "📌 Выберите рубрику для этой статьи:",
-        reply_markup=get_rubric_keyboard()
-    )
+    if unique_words:
+        await message.answer(
+            f"📝 Выберите слова для выделения фиолетовым:\n\n"
+            f"Выделенные слова: Нет\n\n"
+            f"Нажмите на слово - оно выделится. Нажмите еще раз - уберется.",
+            reply_markup=get_highlight_keyboard(unique_words)
+        )
+    else:
+        # Если нет слов для выделения - сразу переходим к рубрике
+        user_data[user_id]["step"] = "waiting_rubric"
+        await message.answer(
+            "📌 Выберите рубрику для этой статьи:",
+            reply_markup=get_rubric_keyboard()
+        )
 
 # ========== РУЧНОЙ ВВОД ==========
 @dp.message_handler(content_types=['photo'])
@@ -550,17 +686,31 @@ async def handle_photo(message: types.Message):
         file_path = f"temp_{user_id}.jpg"
         await bot.download_file(file.file_path, file_path)
         
+        words = re.findall(r'[А-Яа-ЯA-Za-z]{4,}', title.upper())
+        unique_words = list(dict.fromkeys(words))[:10]
+        
         user_data[user_id] = {
             "photo": file_path,
             "title": title,
             "content": content,
-            "step": "waiting_rubric"
+            "words_for_highlight": unique_words,
+            "highlight_words": [],
+            "step": "waiting_highlight"
         }
         
-        await message.answer(
-            "📌 Выберите рубрику для этой статьи:",
-            reply_markup=get_rubric_keyboard()
-        )
+        if unique_words:
+            await message.answer(
+                f"📝 Выберите слова для выделения фиолетовым:\n\n"
+                f"Выделенные слова: Нет\n\n"
+                f"Нажмите на слово - оно выделится. Нажмите еще раз - уберется.",
+                reply_markup=get_highlight_keyboard(unique_words)
+            )
+        else:
+            user_data[user_id]["step"] = "waiting_rubric"
+            await message.answer(
+                "📌 Выберите рубрику для этой статьи:",
+                reply_markup=get_rubric_keyboard()
+            )
         return
     
     if user_id not in user_data:
@@ -591,18 +741,33 @@ async def handle_text(message: types.Message):
         await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
     elif step == "waiting_content":
         user_data[user_id]["content"] = message.text
-        user_data[user_id]["step"] = "waiting_rubric"
+        title = user_data[user_id]["title"]
         
-        await message.answer(
-            "📌 Выберите рубрику для этой статьи:",
-            reply_markup=get_rubric_keyboard()
-        )
+        words = re.findall(r'[А-Яа-ЯA-Za-z]{4,}', title.upper())
+        unique_words = list(dict.fromkeys(words))[:10]
+        user_data[user_id]["words_for_highlight"] = unique_words
+        user_data[user_id]["highlight_words"] = []
+        user_data[user_id]["step"] = "waiting_highlight"
+        
+        if unique_words:
+            await message.answer(
+                f"📝 Выберите слова для выделения фиолетовым:\n\n"
+                f"Выделенные слова: Нет\n\n"
+                f"Нажмите на слово - оно выделится. Нажмите еще раз - уберется.",
+                reply_markup=get_highlight_keyboard(unique_words)
+            )
+        else:
+            user_data[user_id]["step"] = "waiting_rubric"
+            await message.answer(
+                "📌 Выберите рубрику для этой статьи:",
+                reply_markup=get_rubric_keyboard()
+            )
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     from aiogram import executor
     
-    print("🚀 Бот запускается с рубриками...")
+    print("🚀 Бот запускается с выделением слов...")
     
     async def on_startup(dp):
         try:
