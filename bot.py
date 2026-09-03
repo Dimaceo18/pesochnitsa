@@ -15,7 +15,7 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
-# Шрифты - используем системные шрифты если нет своих
+# Шрифты
 FONT_PATHS = [
     "Inter-Bold.ttf",
     "Inter-Regular.ttf", 
@@ -26,24 +26,34 @@ FONT_PATHS = [
     "arial.ttf"
 ]
 
-# Фоновое изображение
-BACKGROUND_IMAGE = "fon.png"
-
 # Размеры сторис
 W, H = 1080, 1920
 
 # ========== ОТСТУПЫ ДЛЯ ДИЗАЙНА ==========
 PHOTO_TOP = 50
-PHOTO_HEIGHT = 710
+PHOTO_HEIGHT = 750
 PHOTO_WIDTH = W - 80
 PHOTO_LEFT = 40
 
-NEWS_BLOCK_TOP = PHOTO_TOP + PHOTO_HEIGHT + 25
-NEWS_BLOCK_HEIGHT = 70
+# БЛОК "FIDER.BY / НОВОСТИ БАРАНОВИЧЕЙ И МИРА"
+HEADER_TOP = PHOTO_TOP + PHOTO_HEIGHT + 20
+HEADER_HEIGHT = 80
 
-TITLE_TOP = NEWS_BLOCK_TOP + NEWS_BLOCK_HEIGHT + 30
+# БЛОК "НОВОСТИ" (прямоугольник)
+NEWS_BLOCK_TOP = HEADER_TOP + HEADER_HEIGHT + 10
+NEWS_BLOCK_HEIGHT = 60
+
+# ЗАГОЛОВОК
+TITLE_TOP = NEWS_BLOCK_TOP + NEWS_BLOCK_HEIGHT + 25
 TITLE_MAX_WIDTH = W - 100
 
+# ФИОЛЕТОВАЯ ЛИНИЯ
+LINE_TOP_OFFSET = 15
+
+# ТЕКСТ НОВОСТИ
+TEXT_TOP_OFFSET = 30
+
+# КНОПКА
 BUTTON_BOTTOM = 150
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
@@ -72,7 +82,6 @@ def load_font(size, weight='regular'):
         except:
             continue
     
-    # Если ничего не найдено - используем дефолтный
     return ImageFont.load_default()
 
 # ========== ПАРСИНГ ТЕКСТА ==========
@@ -127,7 +136,7 @@ def parse_text(text: str) -> tuple:
     
     return title, content
 
-# ========== РЕТРО-ЭФФЕКТ ==========
+# ========== РЕТРО-ЭФФЕКТ ДЛЯ ФОТО ==========
 def apply_retro_effect(image: Image.Image) -> Image.Image:
     if image.mode != 'RGB':
         image = image.convert('RGB')
@@ -175,21 +184,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
     
     # ============================================================
-    # ШАГ 1: СОЗДАЕМ ХОЛСТ
+    # ШАГ 1: БЕЛЫЙ ХОЛСТ
     # ============================================================
-    try:
-        if os.path.exists(BACKGROUND_IMAGE):
-            background = Image.open(BACKGROUND_IMAGE).convert("RGB")
-            background = background.resize((W, H), Image.Resampling.LANCZOS)
-            canvas = background
-            logging.info(f"✅ Фоновое изображение загружено")
-        else:
-            logging.warning(f"⚠️ Фон не найден, создаю черный")
-            canvas = Image.new('RGB', (W, H), color='#1a1a2e')
-    except Exception as e:
-        logging.warning(f"⚠️ Не удалось загрузить фон: {e}")
-        canvas = Image.new('RGB', (W, H), color='#1a1a2e')
-    
+    canvas = Image.new('RGB', (W, H), color='white')
     draw = ImageDraw.Draw(canvas)
     
     # Загружаем шрифты
@@ -224,8 +221,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
             # Применяем ретро-эффект
             photo = apply_retro_effect(photo)
             
-            # Вставляем фото с белой рамкой
-            bordered_photo = Image.new('RGB', (PHOTO_WIDTH + 4, PHOTO_HEIGHT + 4), color='white')
+            # Вставляем фото с серой рамкой (как на макете)
+            bordered_photo = Image.new('RGB', (PHOTO_WIDTH + 4, PHOTO_HEIGHT + 4), color='#e0e0e0')
             bordered_photo.paste(photo, (2, 2))
             canvas.paste(bordered_photo, (PHOTO_LEFT, PHOTO_TOP))
         else:
@@ -234,22 +231,38 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         logging.error(f"❌ Ошибка при обработке фото: {e}")
         # Рисуем заглушку
         draw.rectangle([PHOTO_LEFT, PHOTO_TOP, PHOTO_LEFT + PHOTO_WIDTH, PHOTO_TOP + PHOTO_HEIGHT], 
-                      fill='#333333', outline='white', width=2)
-        draw.text((W//2 - 100, PHOTO_TOP + PHOTO_HEIGHT//2 - 10), 
-                 "📷 ФОТО", font=load_font(40, 'bold'), fill='white')
+                      fill='#f0f0f0', outline='#cccccc', width=2)
+        draw.text((W//2 - 60, PHOTO_TOP + PHOTO_HEIGHT//2 - 10), 
+                 "📷 ФОТО", font=load_font(36, 'bold'), fill='#999999')
     
     # ============================================================
-    # ШАГ 3: БЛОК "НОВОСТИ"
+    # ШАГ 3: ХЕДЕР "FIDER.BY / НОВОСТИ БАРАНОВИЧЕЙ И МИРА"
     # ============================================================
+    header_font = load_font(28, 'bold')
+    header_text = "FIDER.BY / НОВОСТИ БАРАНОВИЧЕЙ И МИРА"
+    
+    header_bbox = draw.textbbox((0, 0), header_text, font=header_font)
+    header_w = header_bbox[2] - header_bbox[0]
+    header_h = header_bbox[3] - header_bbox[1]
+    
+    header_x = (W - header_w) // 2
+    header_y = HEADER_TOP + (HEADER_HEIGHT - header_h) // 2
+    draw.text((header_x, header_y), header_text, font=header_font, fill='#333333')
+    
+    # ============================================================
+    # ШАГ 4: БЛОК "НОВОСТИ" (прямоугольник с фиолетовой обводкой)
+    # ============================================================
+    # Рисуем прямоугольник
     draw.rectangle(
         [PHOTO_LEFT, NEWS_BLOCK_TOP, PHOTO_LEFT + PHOTO_WIDTH, NEWS_BLOCK_TOP + NEWS_BLOCK_HEIGHT],
-        fill='#2A2A2A',
+        fill='white',
         outline='#6C3CE1',
-        width=2
+        width=3
     )
     
+    # Текст "НОВОСТИ" по центру
+    news_font = load_font(28, 'bold')
     news_text = "НОВОСТИ"
-    news_font = load_font(32, 'bold')
     
     news_bbox = draw.textbbox((0, 0), news_text, font=news_font)
     news_w = news_bbox[2] - news_bbox[0]
@@ -257,10 +270,10 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     news_x = (W - news_w) // 2
     news_y = NEWS_BLOCK_TOP + (NEWS_BLOCK_HEIGHT - news_h) // 2
-    draw.text((news_x, news_y), news_text, font=news_font, fill='white')
+    draw.text((news_x, news_y), news_text, font=news_font, fill='#6C3CE1')
     
     # ============================================================
-    # ШАГ 4: ЗАГОЛОВОК
+    # ШАГ 5: ЗАГОЛОВОК (черный, адаптивный)
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 200
@@ -297,7 +310,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                 title_lines = lines
                 break
     else:
-        # Если ничего не подошло
         title_font = load_font(32, 'bold')
         words = title.upper().split()
         lines = []
@@ -318,7 +330,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     title_font = load_font(title_font_size, 'bold')
     title_text = "\n".join(title_lines)
-    draw.text((50, title_y), title_text, font=title_font, fill='white')
+    draw.text((50, title_y), title_text, font=title_font, fill='black')
     
     title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
     title_height = title_bbox[3] - title_bbox[1]
@@ -327,9 +339,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
     
     # ============================================================
-    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ
+    # ШАГ 6: ФИОЛЕТОВАЯ ЛИНИЯ
     # ============================================================
-    LINE_TOP = title_end_y + 15
+    LINE_TOP = title_end_y + LINE_TOP_OFFSET
     LINE_HEIGHT = 3
     draw.rectangle(
         [50, LINE_TOP, W - 50, LINE_TOP + LINE_HEIGHT],
@@ -337,9 +349,9 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     )
     
     # ============================================================
-    # ШАГ 6: ТЕКСТ НОВОСТИ
+    # ШАГ 7: ТЕКСТ НОВОСТИ (черный, адаптивный)
     # ============================================================
-    text_y = LINE_TOP + LINE_HEIGHT + 35
+    text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     
     button_y = H - BUTTON_BOTTOM - 50
     available_text_height = button_y - text_y - 50
@@ -396,14 +408,14 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     pos_y = text_y
     for para_idx, para_lines in enumerate(wrapped_paragraphs):
         for line in para_lines:
-            draw.text((50, pos_y), line, font=text_font, fill='white')
+            draw.text((50, pos_y), line, font=text_font, fill='black')
             pos_y += single_h + 6
         pos_y += 15
     
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 7: КНОПКА
+    # ШАГ 8: КНОПКА "ЧИТАТЬ ПОЛНОСТЬЮ НА САЙТЕ"
     # ============================================================
     button_text = "ЧИТАТЬ ПОЛНОСТЬЮ НА САЙТЕ"
     button_font = load_font(28, 'medium')
@@ -419,6 +431,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     button_x2 = button_x1 + button_w + button_padding_x * 2
     button_y2 = button_y1 + button_h + button_padding_y * 2
     
+    # Рисуем кнопку с фиолетовым фоном
     draw.rectangle(
         [button_x1, button_y1, button_x2, button_y2],
         fill='#6C3CE1',
@@ -426,21 +439,20 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         width=2
     )
     
+    # Текст кнопки белый
     button_text_x = (W - button_w) // 2
     button_text_y = button_y1 + (button_y2 - button_y1 - button_h) // 2
     draw.text((button_text_x, button_text_y), button_text, font=button_font, fill='white')
     
     # ============================================================
-    # ШАГ 8: СОХРАНЯЕМ (исправлено)
+    # ШАГ 9: СОХРАНЯЕМ
     # ============================================================
     output_path = "output_story.png"
     try:
-        # Сохраняем в байтовый буфер, затем записываем
         buffer = io.BytesIO()
         canvas.save(buffer, format='PNG')
         buffer.seek(0)
         
-        # Сохраняем на диск
         with open(output_path, 'wb') as f:
             f.write(buffer.getvalue())
         
@@ -448,7 +460,6 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         return output_path
     except Exception as e:
         logging.error(f"❌ Ошибка при сохранении: {e}")
-        # Пробуем альтернативный способ
         canvas.save(output_path, format='PNG', optimize=True)
         return output_path
 
@@ -457,7 +468,6 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
     try:
         output = await generate_story(photo_path, title, content)
         
-        # Отправляем фото
         with open(output, 'rb') as photo_file:
             await bot.send_photo(
                 chat_id=user_id,
@@ -465,7 +475,6 @@ async def process_story(user_id: int, photo_path: str, title: str, content: str,
                 caption="✅ Готово! 🎞️"
             )
         
-        # Удаляем временные файлы
         for file_path in [photo_path, output]:
             try:
                 if os.path.exists(file_path):
@@ -602,7 +611,7 @@ async def handle_text(message: types.Message):
 if __name__ == "__main__":
     from aiogram import executor
     
-    print("🚀 Бот запускается в новом стиле...")
+    print("🚀 Бот запускается в новом стиле (белый фон)...")
     
     async def on_startup(dp):
         try:
@@ -612,7 +621,6 @@ if __name__ == "__main__":
             print(f"⚠️ Ошибка удаления вебхука: {e}")
     
     try:
-        # Используем webhook для Render
         executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
     except Exception as e:
         print(f"❌ Ошибка при запуске: {e}")
