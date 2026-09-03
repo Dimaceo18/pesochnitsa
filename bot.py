@@ -8,7 +8,6 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import textwrap
 import io
-import asyncio
 
 # ========== КОНФИГ ==========
 API_TOKEN = os.getenv("BOT_TOKEN")
@@ -171,11 +170,11 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
 
 # ========== РИСОВАНИЕ ЗАГОЛОВКА С ВЫДЕЛЕНИЕМ ==========
 def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width, font_size):
-    """Рисует заголовок с выделенными словами фиолетовым цветом"""
+    """Рисует заголовок с выделенными словами фиолетовым цветом (сохраняет оригинальный регистр)"""
     title_font = load_font(font_size, 'bold')
     purple_font = load_font(font_size, 'bold')
     
-    # Разбиваем заголовок на слова
+    # Разбиваем заголовок на слова (сохраняем оригинальный регистр)
     words = title_text.split()
     
     # Создаем список для хранения строк
@@ -315,7 +314,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
     
     # ============================================================
-    # ШАГ 4: ЗАГОЛОВОК С ВЫДЕЛЕНИЕМ
+    # ШАГ 4: ЗАГОЛОВОК С ВЫДЕЛЕНИЕМ (оригинальный регистр)
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 240
@@ -323,9 +322,10 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     # Подбираем размер шрифта для заголовка
     title_font_size = 56
     
+    # Проверяем на оригинальном тексте (не в верхнем регистре)
     for size in range(72, 32, -2):
         test_font = load_font(size, 'bold')
-        test_words = title.upper().split()
+        test_words = title.split()  # Сохраняем оригинальный регистр
         
         # Проверяем, помещается ли заголовок в ширину
         total_width = 0
@@ -347,10 +347,10 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
                 title_font_size = size
                 break
     
-    # Рисуем заголовок с выделением
+    # Рисуем заголовок с выделением (сохраняем оригинальный регистр)
     title_end_y = draw_title_with_highlight(
         draw, 
-        title, 
+        title,  # Передаем оригинальный текст
         highlight_words, 
         50, 
         title_y, 
@@ -711,14 +711,12 @@ if __name__ == "__main__":
     
     async def on_startup(dp):
         try:
-            # Удаляем вебхук перед запуском
             await bot.delete_webhook()
             print("✅ Вебхук удален")
         except Exception as e:
             print(f"⚠️ Ошибка удаления вебхука: {e}")
     
     try:
-        # Запускаем с очисткой предыдущих обновлений
         executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
     except Exception as e:
         print(f"❌ Ошибка при запуске: {e}")
