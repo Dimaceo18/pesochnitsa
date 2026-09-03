@@ -48,17 +48,10 @@ TITLE_MAX_WIDTH = W - 100
 
 # ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
 LINE_TOP_OFFSET = 20
-LINE_HEIGHT = 8  # Было 4, теперь 8 (в 2 раза толще)
+LINE_HEIGHT = 8
 
 # ТЕКСТ НОВОСТИ
 TEXT_TOP_OFFSET = 15
-
-# КНОПКА (ПРЯМОУГОЛЬНИК С ЗАКРУГЛЕННЫМИ УГЛАМИ)
-BUTTON_BOTTOM = 160
-BUTTON_WIDTH = 600
-BUTTON_HEIGHT = 120
-BUTTON_RADIUS = 20  # Радиус скругления углов
-BUTTON_OUTLINE_WIDTH = 15  # Толщина обводки 15px
 
 # ========== РУБРИКИ ==========
 RUBRICS = ["НОВОСТИ", "АФИША", "СПОРТ", "ФИНАНСЫ", "АВТО", "НЕДВИЖИМОСТЬ"]
@@ -90,46 +83,6 @@ def load_font(size, weight='regular'):
             continue
     
     return ImageFont.load_default()
-
-# ========== ФУНКЦИЯ ДЛЯ РИСОВАНИЯ ПРЯМОУГОЛЬНИКА С ЗАКРУГЛЕННЫМИ УГЛАМИ ==========
-def draw_rounded_rectangle(draw, xy, radius, fill, outline=None, width=0):
-    """Рисует прямоугольник с закругленными углами"""
-    x1, y1, x2, y2 = xy
-    
-    # Основной прямоугольник
-    draw.rectangle([x1 + radius, y1, x2 - radius, y2], fill=fill, outline=None, width=0)
-    draw.rectangle([x1, y1 + radius, x2, y2 - radius], fill=fill, outline=None, width=0)
-    
-    # Четыре закругленных угла
-    draw.ellipse([x1, y1, x1 + radius*2, y1 + radius*2], fill=fill, outline=None, width=0)
-    draw.ellipse([x2 - radius*2, y1, x2, y1 + radius*2], fill=fill, outline=None, width=0)
-    draw.ellipse([x1, y2 - radius*2, x1 + radius*2, y2], fill=fill, outline=None, width=0)
-    draw.ellipse([x2 - radius*2, y2 - radius*2, x2, y2], fill=fill, outline=None, width=0)
-    
-    # Рисуем обводку поверх
-    if outline:
-        # Верхняя сторона
-        draw.rectangle([x1 + radius, y1, x2 - radius, y1 + width], fill=outline, outline=None, width=0)
-        # Нижняя сторона
-        draw.rectangle([x1 + radius, y2 - width, x2 - radius, y2], fill=outline, outline=None, width=0)
-        # Левая сторона
-        draw.rectangle([x1, y1 + radius, x1 + width, y2 - radius], fill=outline, outline=None, width=0)
-        # Правая сторона
-        draw.rectangle([x2 - width, y1 + radius, x2, y2 - radius], fill=outline, outline=None, width=0)
-        
-        # Углы
-        draw.ellipse([x1, y1, x1 + radius*2, y1 + radius*2], fill=outline, outline=None, width=0)
-        draw.ellipse([x2 - radius*2, y1, x2, y1 + radius*2], fill=outline, outline=None, width=0)
-        draw.ellipse([x1, y2 - radius*2, x1 + radius*2, y2], fill=outline, outline=None, width=0)
-        draw.ellipse([x2 - radius*2, y2 - radius*2, x2, y2], fill=outline, outline=None, width=0)
-        
-        # Внутренние углы (белые, чтобы скрыть лишнюю обводку)
-        r = radius - width
-        if r > 0:
-            draw.ellipse([x1 + width, y1 + width, x1 + width + r*2, y1 + width + r*2], fill=fill, outline=None, width=0)
-            draw.ellipse([x2 - width - r*2, y1 + width, x2 - width, y1 + width + r*2], fill=fill, outline=None, width=0)
-            draw.ellipse([x1 + width, y2 - width - r*2, x1 + width + r*2, y2 - width], fill=fill, outline=None, width=0)
-            draw.ellipse([x2 - width - r*2, y2 - width - r*2, x2 - width, y2 - width], fill=fill, outline=None, width=0)
 
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
@@ -268,7 +221,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
                  "📷 ФОТО", font=load_font(36, 'bold'), fill='#999999')
     
     # ============================================================
-    # ШАГ 3: РУБРИКА
+    # ШАГ 3: РУБРИКА (текст чуть выше центра)
     # ============================================================
     rubric_font = load_font(34, 'bold')
     rubric_bbox = draw.textbbox((0, 0), rubric, font=rubric_font)
@@ -287,11 +240,12 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
         width=2
     )
     
+    # Текст чуть выше центра (смещение вверх на 4px)
     rub_text_x = rub_x1 + (rub_x2 - rub_x1 - rubric_w) // 2
-    rub_text_y = rub_y1 + (rub_y2 - rub_y1 - rubric_h) // 2 - 2
+    rub_text_y = rub_y1 + (rub_y2 - rub_y1 - rubric_h) // 2 - 4
     draw.text((rub_text_x, rub_text_y), rubric, font=rubric_font, fill='white')
     
-    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
+    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото (текст чуть выше центра)")
     
     # ============================================================
     # ШАГ 4: ЗАГОЛОВОК
@@ -373,8 +327,8 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
     # ============================================================
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     
-    button_y = H - BUTTON_BOTTOM - BUTTON_HEIGHT - 20
-    available_text_height = button_y - text_y - 30
+    # Доступное пространство для текста до низа
+    available_text_height = H - text_y - 50
     
     if content and content != "Текст отсутствует":
         paragraphs = content.split('\n\n')
@@ -435,28 +389,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 7: ПРЯМОУГОЛЬНИК С ЗАКРУГЛЕННЫМИ УГЛАМИ (белый фон, фиолетовая обводка 15px)
-    # ============================================================
-    # Координаты кнопки
-    btn_x1 = (W - BUTTON_WIDTH) // 2
-    btn_y1 = H - BUTTON_BOTTOM - BUTTON_HEIGHT
-    btn_x2 = btn_x1 + BUTTON_WIDTH
-    btn_y2 = btn_y1 + BUTTON_HEIGHT
-    
-    # Рисуем прямоугольник с закругленными углами
-    draw_rounded_rectangle(
-        draw,
-        [btn_x1, btn_y1, btn_x2, btn_y2],
-        BUTTON_RADIUS,
-        fill='white',
-        outline='#6C3CE1',
-        width=BUTTON_OUTLINE_WIDTH
-    )
-    
-    logging.info(f"✅ Кнопка нарисована, размер: {BUTTON_WIDTH}x{BUTTON_HEIGHT}px, обводка: {BUTTON_OUTLINE_WIDTH}px")
-    
-    # ============================================================
-    # ШАГ 8: СОХРАНЯЕМ
+    # ШАГ 7: СОХРАНЯЕМ
     # ============================================================
     output_path = "output_story.png"
     try:
