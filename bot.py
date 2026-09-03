@@ -46,16 +46,18 @@ RUBRIC_PADDING_Y = 12
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
 TITLE_MAX_WIDTH = W - 100
 
-# ФИОЛЕТОВАЯ ЛИНИЯ
+# ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
 LINE_TOP_OFFSET = 20
+LINE_HEIGHT = 8  # Было 4, теперь 8 (в 2 раза толще)
 
 # ТЕКСТ НОВОСТИ
 TEXT_TOP_OFFSET = 15
 
-# КНОПКА (ЭЛЛИПС С ОБВОДКОЙ)
+# КНОПКА (ПРЯМОУГОЛЬНИК С ЗАКРУГЛЕННЫМИ УГЛАМИ)
 BUTTON_BOTTOM = 160
 BUTTON_WIDTH = 600
 BUTTON_HEIGHT = 120
+BUTTON_RADIUS = 20  # Радиус скругления углов
 BUTTON_OUTLINE_WIDTH = 15  # Толщина обводки 15px
 
 # ========== РУБРИКИ ==========
@@ -89,38 +91,45 @@ def load_font(size, weight='regular'):
     
     return ImageFont.load_default()
 
-# ========== ФУНКЦИЯ ДЛЯ РИСОВАНИЯ ЭЛЛИПСА С ОБВОДКОЙ ==========
-def draw_ellipse_with_outline(draw, xy, outline_width, fill, outline):
-    """Рисует эллипс с толстой обводкой"""
+# ========== ФУНКЦИЯ ДЛЯ РИСОВАНИЯ ПРЯМОУГОЛЬНИКА С ЗАКРУГЛЕННЫМИ УГЛАМИ ==========
+def draw_rounded_rectangle(draw, xy, radius, fill, outline=None, width=0):
+    """Рисует прямоугольник с закругленными углами"""
     x1, y1, x2, y2 = xy
-    center_x = (x1 + x2) // 2
-    center_y = (y1 + y2) // 2
-    rx = (x2 - x1) // 2
-    ry = (y2 - y1) // 2
     
-    # Рисуем внешний эллипс (обводка)
-    draw.ellipse(
-        [center_x - rx - outline_width//2, center_y - ry - outline_width//2,
-         center_x + rx + outline_width//2, center_y + ry + outline_width//2],
-        fill=outline,
-        outline=outline,
-        width=outline_width
-    )
+    # Основной прямоугольник
+    draw.rectangle([x1 + radius, y1, x2 - radius, y2], fill=fill, outline=None, width=0)
+    draw.rectangle([x1, y1 + radius, x2, y2 - radius], fill=fill, outline=None, width=0)
     
-    # Рисуем внутренний эллипс (белый фон)
-    draw.ellipse(
-        [center_x - rx + outline_width//2, center_y - ry + outline_width//2,
-         center_x + rx - outline_width//2, center_y + ry - outline_width//2],
-        fill=fill,
-        outline=fill,
-        width=0
-    )
-
-# ========== ФУНКЦИЯ ДЛЯ РИСОВАНИЯ ПРЯМОУГОЛЬНИКА ==========
-def draw_rectangle(draw, xy, fill, outline=None, width=1):
-    """Рисует прямоугольник с прямыми углами"""
-    x1, y1, x2, y2 = xy
-    draw.rectangle([x1, y1, x2, y2], fill=fill, outline=outline, width=width)
+    # Четыре закругленных угла
+    draw.ellipse([x1, y1, x1 + radius*2, y1 + radius*2], fill=fill, outline=None, width=0)
+    draw.ellipse([x2 - radius*2, y1, x2, y1 + radius*2], fill=fill, outline=None, width=0)
+    draw.ellipse([x1, y2 - radius*2, x1 + radius*2, y2], fill=fill, outline=None, width=0)
+    draw.ellipse([x2 - radius*2, y2 - radius*2, x2, y2], fill=fill, outline=None, width=0)
+    
+    # Рисуем обводку поверх
+    if outline:
+        # Верхняя сторона
+        draw.rectangle([x1 + radius, y1, x2 - radius, y1 + width], fill=outline, outline=None, width=0)
+        # Нижняя сторона
+        draw.rectangle([x1 + radius, y2 - width, x2 - radius, y2], fill=outline, outline=None, width=0)
+        # Левая сторона
+        draw.rectangle([x1, y1 + radius, x1 + width, y2 - radius], fill=outline, outline=None, width=0)
+        # Правая сторона
+        draw.rectangle([x2 - width, y1 + radius, x2, y2 - radius], fill=outline, outline=None, width=0)
+        
+        # Углы
+        draw.ellipse([x1, y1, x1 + radius*2, y1 + radius*2], fill=outline, outline=None, width=0)
+        draw.ellipse([x2 - radius*2, y1, x2, y1 + radius*2], fill=outline, outline=None, width=0)
+        draw.ellipse([x1, y2 - radius*2, x1 + radius*2, y2], fill=outline, outline=None, width=0)
+        draw.ellipse([x2 - radius*2, y2 - radius*2, x2, y2], fill=outline, outline=None, width=0)
+        
+        # Внутренние углы (белые, чтобы скрыть лишнюю обводку)
+        r = radius - width
+        if r > 0:
+            draw.ellipse([x1 + width, y1 + width, x1 + width + r*2, y1 + width + r*2], fill=fill, outline=None, width=0)
+            draw.ellipse([x2 - width - r*2, y1 + width, x2 - width, y1 + width + r*2], fill=fill, outline=None, width=0)
+            draw.ellipse([x1 + width, y2 - width - r*2, x1 + width + r*2, y2 - width], fill=fill, outline=None, width=0)
+            draw.ellipse([x2 - width - r*2, y2 - width - r*2, x2 - width, y2 - width], fill=fill, outline=None, width=0)
 
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
@@ -351,10 +360,9 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
     logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
     
     # ============================================================
-    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ
+    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
     # ============================================================
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
-    LINE_HEIGHT = 4
     draw.rectangle(
         [50, LINE_TOP, W - 50, LINE_TOP + LINE_HEIGHT],
         fill='#6C3CE1'
@@ -427,24 +435,25 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 7: ЭЛЛИПС С БЕЛЫМ ФОНОМ И ФИОЛЕТОВОЙ ОБВОДКОЙ 15px
+    # ШАГ 7: ПРЯМОУГОЛЬНИК С ЗАКРУГЛЕННЫМИ УГЛАМИ (белый фон, фиолетовая обводка 15px)
     # ============================================================
-    # Координаты эллипса
-    ellipse_x1 = (W - BUTTON_WIDTH) // 2
-    ellipse_y1 = H - BUTTON_BOTTOM - BUTTON_HEIGHT
-    ellipse_x2 = ellipse_x1 + BUTTON_WIDTH
-    ellipse_y2 = ellipse_y1 + BUTTON_HEIGHT
+    # Координаты кнопки
+    btn_x1 = (W - BUTTON_WIDTH) // 2
+    btn_y1 = H - BUTTON_BOTTOM - BUTTON_HEIGHT
+    btn_x2 = btn_x1 + BUTTON_WIDTH
+    btn_y2 = btn_y1 + BUTTON_HEIGHT
     
-    # Рисуем эллипс с обводкой
-    draw_ellipse_with_outline(
+    # Рисуем прямоугольник с закругленными углами
+    draw_rounded_rectangle(
         draw,
-        [ellipse_x1, ellipse_y1, ellipse_x2, ellipse_y2],
-        BUTTON_OUTLINE_WIDTH,
-        fill='white',          # Белый фон
-        outline='#6C3CE1'      # Фиолетовая обводка
+        [btn_x1, btn_y1, btn_x2, btn_y2],
+        BUTTON_RADIUS,
+        fill='white',
+        outline='#6C3CE1',
+        width=BUTTON_OUTLINE_WIDTH
     )
     
-    logging.info(f"✅ Эллипс нарисован, размер: {BUTTON_WIDTH}x{BUTTON_HEIGHT}px, обводка: {BUTTON_OUTLINE_WIDTH}px")
+    logging.info(f"✅ Кнопка нарисована, размер: {BUTTON_WIDTH}x{BUTTON_HEIGHT}px, обводка: {BUTTON_OUTLINE_WIDTH}px")
     
     # ============================================================
     # ШАГ 8: СОХРАНЯЕМ
