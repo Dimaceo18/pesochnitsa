@@ -168,6 +168,20 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
     
     return noisy_image
 
+# ========== ФУНКЦИЯ ДЛЯ ИЗВЛЕЧЕНИЯ СЛОВ ==========
+def extract_words(text: str) -> list:
+    """Извлекает уникальные слова длиной >= 4 символов"""
+    # Правильное регулярное выражение для кириллицы и латиницы
+    words = re.findall(r'[А-Яа-яA-Za-z]{4,}', text)
+    # Убираем дубликаты, сохраняя порядок
+    unique_words = []
+    seen = set()
+    for word in words:
+        if word not in seen:
+            seen.add(word)
+            unique_words.append(word)
+    return unique_words[:10]  # Максимум 10 слов
+
 # ========== РИСОВАНИЕ ЗАГОЛОВКА С ВЫДЕЛЕНИЕМ ==========
 def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width, font_size):
     """Рисует заголовок с выделенными словами фиолетовым цветом"""
@@ -184,7 +198,7 @@ def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width
     
     # Разбиваем на строки по ширине
     for word in words:
-        # Проверяем, не является ли слово выделенным
+        # Проверяем, не является ли слово выделенным (сравниваем в верхнем регистре)
         is_highlighted = word.upper() in [w.upper() for w in highlight_words]
         test_font = purple_font if is_highlighted else title_font
         word_bbox = draw.textbbox((0, 0), word, font=test_font)
@@ -643,9 +657,8 @@ async def handle_forward(message: types.Message):
     if not content:
         content = "Текст отсутствует"
     
-    # Извлекаем слова для выделения (уникальные слова длиной > 3 символов)
-    words = re.findall(r'[А-Яа-ЯA-Za-z]{4,}', title.upper())
-    unique_words = list(dict.fromkeys(words))[:10]  # Максимум 10 уникальных слов
+    # Извлекаем слова для выделения (используем исправленную функцию)
+    unique_words = extract_words(title.upper())
     
     # Сохраняем данные
     user_data[user_id] = {
@@ -686,8 +699,7 @@ async def handle_photo(message: types.Message):
         file_path = f"temp_{user_id}.jpg"
         await bot.download_file(file.file_path, file_path)
         
-        words = re.findall(r'[А-Яа-ЯA-Za-z]{4,}', title.upper())
-        unique_words = list(dict.fromkeys(words))[:10]
+        unique_words = extract_words(title.upper())
         
         user_data[user_id] = {
             "photo": file_path,
@@ -743,8 +755,7 @@ async def handle_text(message: types.Message):
         user_data[user_id]["content"] = message.text
         title = user_data[user_id]["title"]
         
-        words = re.findall(r'[А-Яа-ЯA-Za-z]{4,}', title.upper())
-        unique_words = list(dict.fromkeys(words))[:10]
+        unique_words = extract_words(title.upper())
         user_data[user_id]["words_for_highlight"] = unique_words
         user_data[user_id]["highlight_words"] = []
         user_data[user_id]["step"] = "waiting_highlight"
