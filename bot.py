@@ -39,16 +39,16 @@ PHOTO_LEFT = 40
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
 TITLE_MAX_WIDTH = W - 100
 
-# ФИОЛЕТОВАЯ ЛИНИЯ
-LINE_TOP_OFFSET = 20
+# ФИОЛЕТОВАЯ ЛИНИЯ (расстояние 10px от заголовка)
+LINE_TOP_OFFSET = 10
 
-# ТЕКСТ НОВОСТИ
-TEXT_TOP_OFFSET = 30
+# ТЕКСТ НОВОСТИ (расстояние 15px от линии)
+TEXT_TOP_OFFSET = 15
 
-# КНОПКА
+# КНОПКА (в 2 раза больше)
 BUTTON_BOTTOM = 160
-BUTTON_PADDING_X = 60
-BUTTON_PADDING_Y = 28
+BUTTON_WIDTH = 400  # Ширина кнопки
+BUTTON_HEIGHT = 80   # Высота кнопки (в 2 раза больше чем была)
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -77,6 +77,25 @@ def load_font(size, weight='regular'):
             continue
     
     return ImageFont.load_default()
+
+# ========== ФУНКЦИЯ ДЛЯ РИСОВАНИЯ СКРУГЛЕННОГО ПРЯМОУГОЛЬНИКА ==========
+def draw_rounded_rectangle(draw, xy, radius, fill, outline=None, width=1):
+    """Рисует прямоугольник с закругленными углами"""
+    x1, y1, x2, y2 = xy
+    
+    # Основной прямоугольник
+    draw.rectangle([x1 + radius, y1, x2 - radius, y2], fill=fill, outline=outline, width=width)
+    draw.rectangle([x1, y1 + radius, x2, y2 - radius], fill=fill, outline=outline, width=width)
+    
+    # Четыре закругленных угла
+    # Верхний левый
+    draw.ellipse([x1, y1, x1 + radius*2, y1 + radius*2], fill=fill, outline=outline, width=width)
+    # Верхний правый
+    draw.ellipse([x2 - radius*2, y1, x2, y1 + radius*2], fill=fill, outline=outline, width=width)
+    # Нижний левый
+    draw.ellipse([x1, y2 - radius*2, x1 + radius*2, y2], fill=fill, outline=outline, width=width)
+    # Нижний правый
+    draw.ellipse([x2 - radius*2, y2 - radius*2, x2, y2], fill=fill, outline=outline, width=width)
 
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
@@ -289,7 +308,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
     
     # ============================================================
-    # ШАГ 4: ФИОЛЕТОВАЯ ЛИНИЯ
+    # ШАГ 4: ФИОЛЕТОВАЯ ЛИНИЯ (10px от заголовка)
     # ============================================================
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
     LINE_HEIGHT = 4
@@ -299,12 +318,12 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     )
     
     # ============================================================
-    # ШАГ 5: ТЕКСТ НОВОСТИ (обычный, черный)
+    # ШАГ 5: ТЕКСТ НОВОСТИ (15px от линии)
     # ============================================================
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     
-    button_y = H - BUTTON_BOTTOM - 50
-    available_text_height = button_y - text_y - 50
+    button_y = H - BUTTON_BOTTOM - BUTTON_HEIGHT - 20
+    available_text_height = button_y - text_y - 30
     
     if content and content != "Текст отсутствует":
         paragraphs = content.split('\n\n')
@@ -365,33 +384,28 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 6: КНОПКА (толстая, фиолетовая, без текста)
+    # ШАГ 6: КНОПКА В ВИДЕ ЭЛЛИПСА (в 2 раза больше)
     # ============================================================
-    # Рисуем толстую фиолетовую кнопку-прямоугольник
-    button_x1 = (W // 2) - 180
-    button_y1 = H - BUTTON_BOTTOM - 60
-    button_x2 = (W // 2) + 180
-    button_y2 = H - BUTTON_BOTTOM + 10
+    # Координаты кнопки
+    button_x1 = (W - BUTTON_WIDTH) // 2
+    button_y1 = H - BUTTON_BOTTOM - BUTTON_HEIGHT
+    button_x2 = button_x1 + BUTTON_WIDTH
+    button_y2 = button_y1 + BUTTON_HEIGHT
     
-    # Толстая кнопка
-    draw.rectangle(
+    # Радиус скругления (делаем эллипс - половина высоты)
+    radius = BUTTON_HEIGHT // 2
+    
+    # Рисуем кнопку с закругленными углами (эллипс)
+    draw_rounded_rectangle(
+        draw,
         [button_x1, button_y1, button_x2, button_y2],
+        radius,
         fill='#6C3CE1',
         outline='#6C3CE1',
         width=3
     )
     
-    # Добавляем скругление углов (имитация)
-    # Рисуем маленькие круги по углам для скругления
-    radius = 12
-    # Верхние углы
-    draw.ellipse([button_x1, button_y1, button_x1 + radius*2, button_y1 + radius*2], fill='#6C3CE1')
-    draw.ellipse([button_x2 - radius*2, button_y1, button_x2, button_y1 + radius*2], fill='#6C3CE1')
-    # Нижние углы
-    draw.ellipse([button_x1, button_y2 - radius*2, button_x1 + radius*2, button_y2], fill='#6C3CE1')
-    draw.ellipse([button_x2 - radius*2, button_y2 - radius*2, button_x2, button_y2], fill='#6C3CE1')
-    
-    logging.info(f"✅ Кнопка нарисована, размер: {button_x2 - button_x1}x{button_y2 - button_y1}px")
+    logging.info(f"✅ Кнопка-эллипс нарисована, размер: {BUTTON_WIDTH}x{BUTTON_HEIGHT}px, радиус: {radius}px")
     
     # ============================================================
     # ШАГ 7: СОХРАНЯЕМ
