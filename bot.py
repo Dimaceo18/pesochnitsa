@@ -36,12 +36,11 @@ PHOTO_HEIGHT = 800
 PHOTO_WIDTH = W - 80
 PHOTO_LEFT = 40
 
-# РУБРИКА (фиолетовый прямоугольник поверх фото)
+# РУБРИКА (фиолетовый прямоугольник поверх фото с прямыми углами)
 RUBRIC_TOP = PHOTO_TOP + 20
 RUBRIC_LEFT = PHOTO_LEFT + 20
-RUBRIC_PADDING_X = 25
-RUBRIC_PADDING_Y = 10
-RUBRIC_RADIUS = 10
+RUBRIC_PADDING_X = 30  # Отступы по бокам текста
+RUBRIC_PADDING_Y = 12  # Отступы сверху/снизу текста
 
 # ЗАГОЛОВОК
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
@@ -89,9 +88,15 @@ def load_font(size, weight='regular'):
     
     return ImageFont.load_default()
 
-# ========== ФУНКЦИЯ ДЛЯ РИСОВАНИЯ СКРУГЛЕННОГО ПРЯМОУГОЛЬНИКА ==========
+# ========== ФУНКЦИЯ ДЛЯ РИСОВАНИЯ ПРЯМОУГОЛЬНИКА С ПРЯМЫМИ УГЛАМИ ==========
+def draw_rectangle(draw, xy, fill, outline=None, width=1):
+    """Рисует прямоугольник с прямыми углами"""
+    x1, y1, x2, y2 = xy
+    draw.rectangle([x1, y1, x2, y2], fill=fill, outline=outline, width=width)
+
+# ========== ФУНКЦИЯ ДЛЯ РИСОВАНИЯ СКРУГЛЕННОГО ПРЯМОУГОЛЬНИКА (ДЛЯ КНОПКИ) ==========
 def draw_rounded_rectangle(draw, xy, radius, fill, outline=None, width=1):
-    """Рисует прямоугольник с закругленными углами"""
+    """Рисует прямоугольник с закругленными углами (только для кнопки)"""
     x1, y1, x2, y2 = xy
     
     draw.rectangle([x1 + radius, y1, x2 - radius, y2], fill=fill, outline=outline, width=width)
@@ -154,7 +159,7 @@ def parse_text(text: str) -> tuple:
     
     return title, content
 
-# ========== ОБРАБОТКА ФОТО (НОВЫЙ ЭФФЕКТ) ==========
+# ========== ОБРАБОТКА ФОТО ==========
 def apply_photo_effect(image: Image.Image) -> Image.Image:
     """Применяет эффекты к фото: шум +5%, насыщенность +5%"""
     if image.mode != 'RGB':
@@ -168,7 +173,7 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
     pixel_data = list(image.getdata())
     width, height = image.size
     
-    noise_intensity = 12  # ~5% от 255
+    noise_intensity = 12
     noisy_pixels = []
     
     for pixel in pixel_data:
@@ -222,7 +227,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
                 top = (new_height - PHOTO_HEIGHT) // 2
                 photo = photo.crop((0, top, new_width, top + PHOTO_HEIGHT))
             
-            # Применяем эффекты (шум +5%, насыщенность +5%)
+            # Применяем эффекты
             photo = apply_photo_effect(photo)
             
             # Вставляем фото с серой рамкой
@@ -239,9 +244,9 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
                  "📷 ФОТО", font=load_font(36, 'bold'), fill='#999999')
     
     # ============================================================
-    # ШАГ 3: РУБРИКА (фиолетовый прямоугольник поверх фото)
+    # ШАГ 3: РУБРИКА (фиолетовый прямоугольник с прямыми углами)
     # ============================================================
-    rubric_font = load_font(32, 'bold')
+    rubric_font = load_font(34, 'bold')
     rubric_bbox = draw.textbbox((0, 0), rubric, font=rubric_font)
     rubric_w = rubric_bbox[2] - rubric_bbox[0]
     rubric_h = rubric_bbox[3] - rubric_bbox[1]
@@ -252,22 +257,20 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str)
     rub_x2 = RUBRIC_LEFT + rubric_w + RUBRIC_PADDING_X * 2
     rub_y2 = RUBRIC_TOP + rubric_h + RUBRIC_PADDING_Y * 2
     
-    # Рисуем фиолетовый прямоугольник с закругленными углами
-    draw_rounded_rectangle(
-        draw,
+    # Рисуем прямоугольник с прямыми углами
+    draw.rectangle(
         [rub_x1, rub_y1, rub_x2, rub_y2],
-        RUBRIC_RADIUS,
         fill='#6C3CE1',
         outline='#6C3CE1',
         width=2
     )
     
-    # Текст рубрики белый
-    rub_text_x = rub_x1 + RUBRIC_PADDING_X
-    rub_text_y = rub_y1 + RUBRIC_PADDING_Y
+    # Текст рубрики ровно по центру прямоугольника
+    rub_text_x = rub_x1 + (rub_x2 - rub_x1 - rubric_w) // 2
+    rub_text_y = rub_y1 + (rub_y2 - rub_y1 - rubric_h) // 2
     draw.text((rub_text_x, rub_text_y), rubric, font=rubric_font, fill='white')
     
-    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
+    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото (прямые углы, текст по центру)")
     
     # ============================================================
     # ШАГ 4: ЗАГОЛОВОК (черный, жирный)
@@ -568,7 +571,6 @@ async def handle_forward(message: types.Message):
     if not content:
         content = "Текст отсутствует"
     
-    # Сохраняем данные и запрашиваем рубрику
     user_data[user_id] = {
         "photo": photo_file_path,
         "title": title,
