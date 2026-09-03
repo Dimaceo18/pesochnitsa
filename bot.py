@@ -45,10 +45,10 @@ LINE_TOP_OFFSET = 20
 # ТЕКСТ НОВОСТИ (расстояние 15px от линии)
 TEXT_TOP_OFFSET = 15
 
-# КНОПКА
+# КНОПКА (в 2 раза больше)
 BUTTON_BOTTOM = 160
-BUTTON_WIDTH = 400
-BUTTON_HEIGHT = 80
+BUTTON_WIDTH = 800   # Ширина кнопки (было 400, теперь в 2 раза больше)
+BUTTON_HEIGHT = 160  # Высота кнопки (было 80, теперь в 2 раза больше)
 
 # ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
@@ -238,7 +238,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
                  "📷 ФОТО", font=load_font(36, 'bold'), fill='#999999')
     
     # ============================================================
-    # ШАГ 3: ЗАГОЛОВОК (фиолетовый, жирный)
+    # ШАГ 3: ЗАГОЛОВОК (черный, жирный)
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 240
@@ -295,8 +295,8 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     
     title_font = load_font(title_font_size, 'bold')
     title_text = "\n".join(title_lines)
-    # ЗАГОЛОВОК ТЕПЕРЬ ФИОЛЕТОВЫЙ
-    draw.text((50, title_y), title_text, font=title_font, fill='#6C3CE1')
+    # ЗАГОЛОВОК ЧЕРНЫЙ
+    draw.text((50, title_y), title_text, font=title_font, fill='black')
     
     title_bbox = draw.textbbox((0, 0), title_text, font=title_font)
     title_height = title_bbox[3] - title_bbox[1]
@@ -381,13 +381,14 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
     
     # ============================================================
-    # ШАГ 6: КНОПКА В ВИДЕ ЭЛЛИПСА
+    # ШАГ 6: КНОПКА В ВИДЕ ЭЛЛИПСА (в 2 раза больше)
     # ============================================================
     button_x1 = (W - BUTTON_WIDTH) // 2
     button_y1 = H - BUTTON_BOTTOM - BUTTON_HEIGHT
     button_x2 = button_x1 + BUTTON_WIDTH
     button_y2 = button_y1 + BUTTON_HEIGHT
     
+    # Радиус скругления (половина высоты для эллипса)
     radius = BUTTON_HEIGHT // 2
     
     draw_rounded_rectangle(
@@ -399,7 +400,7 @@ async def generate_story(photo_path: str, title: str, content: str) -> str:
         width=3
     )
     
-    logging.info(f"✅ Кнопка-эллипс нарисована, размер: {BUTTON_WIDTH}x{BUTTON_HEIGHT}px")
+    logging.info(f"✅ Кнопка-эллипс нарисована, размер: {BUTTON_WIDTH}x{BUTTON_HEIGHT}px, радиус: {radius}px")
     
     # ============================================================
     # ШАГ 7: СОХРАНЯЕМ
