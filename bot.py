@@ -168,7 +168,7 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
     
     return noisy_image
 
-# ========== РИСОВАНИЕ ЗАГОЛОВКА С ВЫДЕЛЕНИЕМ (ЗАГЛАВНЫЕ БУКВЫ) ==========
+# ========== РИСОВАНИЕ ЗАГОЛОВКА С ВЫДЕЛЕНИЕМ ==========
 def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width, font_size):
     """Рисует заголовок ЗАГЛАВНЫМИ БУКВАМИ с выделенными словами фиолетовым цветом"""
     title_font = load_font(font_size, 'bold')
@@ -187,7 +187,7 @@ def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width
     
     # Разбиваем на строки по ширине
     for word in words:
-        # Проверяем, не является ли слово выделенным (сравниваем в верхнем регистре)
+        # Проверяем, не является ли слово выделенным
         is_highlighted = word in [w.upper() for w in highlight_words]
         test_font = purple_font if is_highlighted else title_font
         word_bbox = draw.textbbox((0, 0), word, font=test_font)
@@ -232,10 +232,10 @@ def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width
                 space_width = space_bbox[2] - space_bbox[0]
                 current_x += space_width
         
-        # Высота строки
+        # Высота строки (как в оригинальном боте)
         line_bbox = draw.textbbox((0, 0), "A", font=title_font)
         line_height = line_bbox[3] - line_bbox[1]
-        current_y += line_height + 8
+        current_y += line_height  # БЕЗ дополнительного интервала (как в оригинале)
     
     return current_y
 
@@ -317,14 +317,14 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
     
     # ============================================================
-    # ШАГ 4: ЗАГОЛОВОК С ВЫДЕЛЕНИЕМ (ВСЕ ЗАГЛАВНЫЕ)
+    # ШАГ 4: ЗАГОЛОВОК С ВЫДЕЛЕНИЕМ
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 240
     
     title_font_size = 56
     
-    # Подбираем размер шрифта (используем заглавный текст)
+    # Подбираем размер шрифта
     title_upper = title.upper()
     for size in range(72, 32, -2):
         test_font = load_font(size, 'bold')
@@ -349,10 +349,10 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
                 title_font_size = size
                 break
     
-    # Рисуем заголовок с выделением (все заглавные)
+    # Рисуем заголовок с выделением
     title_end_y = draw_title_with_highlight(
         draw, 
-        title,  # Передаем оригинальный текст, функция сама сделает заглавные
+        title, 
         highlight_words, 
         50, 
         title_y, 
