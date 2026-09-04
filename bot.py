@@ -46,7 +46,7 @@ RUBRIC_PADDING_Y = 12
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
 TITLE_MAX_WIDTH = W - 100
 
-# ФИОЛЕТОВАЯ ЛИНИЯ
+# ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
 LINE_TOP_OFFSET = 20
 LINE_HEIGHT = 8
 
@@ -232,10 +232,11 @@ def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width
                 space_width = space_bbox[2] - space_bbox[0]
                 current_x += space_width
         
-        # Высота строки (как в оригинальном боте)
+        # Высота строки - ТОЧНО КАК В ОРИГИНАЛЬНОМ БОТЕ
+        # В оригинальном боте нет дополнительного интервала между строками
         line_bbox = draw.textbbox((0, 0), "A", font=title_font)
         line_height = line_bbox[3] - line_bbox[1]
-        current_y += line_height  # БЕЗ дополнительного интервала (как в оригинале)
+        current_y += line_height  # БЕЗ дополнительного интервала
     
     return current_y
 
@@ -317,39 +318,67 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
     
     # ============================================================
-    # ШАГ 4: ЗАГОЛОВОК С ВЫДЕЛЕНИЕМ
+    # ШАГ 4: ЗАГОЛОВОК - ТОЧНО КАК В ОРИГИНАЛЬНОМ БОТЕ
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 240
     
     title_font_size = 56
+    title_lines = []
     
-    # Подбираем размер шрифта
-    title_upper = title.upper()
     for size in range(72, 32, -2):
         test_font = load_font(size, 'bold')
-        test_words = title_upper.split()
         
-        total_width = 0
-        for word in test_words:
-            word_bbox = draw.textbbox((0, 0), word, font=test_font)
-            total_width += word_bbox[2] - word_bbox[0]
-            total_width += 10
+        words = title.upper().split()
+        lines = []
+        current_line = []
         
-        if total_width <= TITLE_MAX_WIDTH * 2:
-            lines_count = 1
-            if total_width > TITLE_MAX_WIDTH:
-                lines_count = 2
-            
-            test_text = "\n".join(["A"] * lines_count)
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            bbox = draw.textbbox((0, 0), test_line, font=test_font)
+            if bbox[2] - bbox[0] <= TITLE_MAX_WIDTH:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        if current_line:
+            lines.append(' '.join(current_line))
+        
+        if lines:
+            test_text = "\n".join(lines)
             bbox = draw.textbbox((0, 0), test_text, font=test_font)
             title_h = bbox[3] - bbox[1]
             
-            if title_h <= max_title_height:
+            if title_h <= max_title_height and len(lines) <= 3:
                 title_font_size = size
+                title_lines = lines
                 break
+    else:
+        title_font = load_font(32, 'bold')
+        words = title.upper().split()
+        lines = []
+        current_line = []
+        for word in words:
+            test_line = ' '.join(current_line + [word])
+            bbox = draw.textbbox((0, 0), test_line, font=title_font)
+            if bbox[2] - bbox[0] <= TITLE_MAX_WIDTH:
+                current_line.append(word)
+            else:
+                if current_line:
+                    lines.append(' '.join(current_line))
+                current_line = [word]
+        if current_line:
+            lines.append(' '.join(current_line))
+        title_lines = lines
+        title_font_size = 32
     
-    # Рисуем заголовок с выделением
+    # Рисуем заголовок - используем логику оригинального бота
+    title_font = load_font(title_font_size, 'bold')
+    title_text = "\n".join(title_lines)
+    
+    # Проверяем выделенные слова и рисуем с подсветкой
+    # Для этого используем нашу функцию, но с правильным межстрочным интервалом
     title_end_y = draw_title_with_highlight(
         draw, 
         title, 
@@ -360,10 +389,10 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
         title_font_size
     )
     
-    logging.info(f"📐 Размер заголовка: {title_font_size}px, выделенных слов: {len(highlight_words)}")
+    logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
     
     # ============================================================
-    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ
+    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
     # ============================================================
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
     draw.rectangle(
@@ -372,7 +401,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     )
     
     # ============================================================
-    # ШАГ 6: ТЕКСТ НОВОСТИ
+    # ШАГ 6: ТЕКСТ НОВОСТИ - ТОЧНО КАК В ОРИГИНАЛЬНОМ БОТЕ
     # ============================================================
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     
