@@ -45,6 +45,7 @@ RUBRIC_PADDING_Y = 12
 # ЗАГОЛОВОК
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
 TITLE_MAX_WIDTH = W - 100
+TITLE_LINE_SPACING = 10  # Межстрочный интервал для заголовка
 
 # ФИОЛЕТОВАЯ ЛИНИЯ
 LINE_TOP_OFFSET = 20
@@ -246,12 +247,12 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
     
     # ============================================================
-    # ШАГ 4: ЗАГОЛОВОК (ТОЧНО КАК В ОРИГИНАЛЬНОМ БОТЕ)
+    # ШАГ 4: ЗАГОЛОВОК (с межстрочным интервалом)
     # ============================================================
     title_y = TITLE_TOP
-    max_title_height = 240
+    max_title_height = 280  # Увеличил чтобы вмещался с интервалом
     
-    # Подбираем размер шрифта как в оригинале
+    # Подбираем размер шрифта
     title_font_size = 56
     title_lines = []
     
@@ -275,11 +276,12 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
             lines.append(' '.join(current_line))
         
         if lines:
-            test_text = "\n".join(lines)
-            bbox = draw.textbbox((0, 0), test_text, font=test_font)
-            title_h = bbox[3] - bbox[1]
+            # Проверяем высоту с учетом межстрочного интервала
+            line_bbox = draw.textbbox((0, 0), "A", font=test_font)
+            line_height = line_bbox[3] - line_bbox[1]
+            total_height = len(lines) * line_height + (len(lines) - 1) * TITLE_LINE_SPACING
             
-            if title_h <= max_title_height and len(lines) <= 3:
+            if total_height <= max_title_height and len(lines) <= 3:
                 title_font_size = size
                 title_lines = lines
                 break
@@ -302,12 +304,16 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
         title_lines = lines
         title_font_size = 32
     
-    # Рисуем заголовок построчно с выделением
+    # Рисуем заголовок построчно с межстрочным интервалом
     title_font = load_font(title_font_size, 'bold')
     purple_font = load_font(title_font_size, 'bold')
     
+    # Вычисляем высоту строки
+    line_bbox = draw.textbbox((0, 0), "A", font=title_font)
+    line_height = line_bbox[3] - line_bbox[1]
+    
     current_y = title_y
-    for line in title_lines:
+    for line_idx, line in enumerate(title_lines):
         # Разбиваем строку на слова
         words_in_line = line.split()
         current_x = 50
@@ -324,14 +330,12 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
             word_width = word_bbox[2] - word_bbox[0]
             current_x += word_width + 10  # пробел между словами
         
-        # Переход на следующую строку - ТОЧНО КАК В ОРИГИНАЛЕ
-        line_bbox = draw.textbbox((0, 0), "A", font=title_font)
-        line_height = line_bbox[3] - line_bbox[1]
-        current_y += line_height
+        # Переход на следующую строку с межстрочным интервалом
+        current_y += line_height + TITLE_LINE_SPACING
     
-    title_end_y = current_y
+    title_end_y = current_y - TITLE_LINE_SPACING  # Убираем лишний интервал после последней строки
     
-    logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
+    logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}, межстрочный интервал: {TITLE_LINE_SPACING}px")
     
     # ============================================================
     # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ
@@ -343,7 +347,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     )
     
     # ============================================================
-    # ШАГ 6: ТЕКСТ НОВОСТИ - ТОЧНО КАК В ОРИГИНАЛЬНОМ БОТЕ
+    # ШАГ 6: ТЕКСТ НОВОСТИ
     # ============================================================
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     
