@@ -46,7 +46,7 @@ RUBRIC_PADDING_Y = 12
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 35
 TITLE_MAX_WIDTH = W - 100
 
-# ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
+# ФИОЛЕТОВАЯ ЛИНИЯ
 LINE_TOP_OFFSET = 20
 LINE_HEIGHT = 8
 
@@ -168,78 +168,6 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
     
     return noisy_image
 
-# ========== РИСОВАНИЕ ЗАГОЛОВКА С ВЫДЕЛЕНИЕМ ==========
-def draw_title_with_highlight(draw, title_text, highlight_words, x, y, max_width, font_size):
-    """Рисует заголовок ЗАГЛАВНЫМИ БУКВАМИ с выделенными словами фиолетовым цветом"""
-    title_font = load_font(font_size, 'bold')
-    purple_font = load_font(font_size, 'bold')
-    
-    # Переводим заголовок в ЗАГЛАВНЫЕ БУКВЫ
-    title_upper = title_text.upper()
-    
-    # Разбиваем заголовок на слова
-    words = title_upper.split()
-    
-    # Создаем список для хранения строк
-    lines = []
-    current_line = []
-    current_line_width = 0
-    
-    # Разбиваем на строки по ширине
-    for word in words:
-        # Проверяем, не является ли слово выделенным
-        is_highlighted = word in [w.upper() for w in highlight_words]
-        test_font = purple_font if is_highlighted else title_font
-        word_bbox = draw.textbbox((0, 0), word, font=test_font)
-        word_width = word_bbox[2] - word_bbox[0]
-        
-        # Добавляем пробел перед словом (кроме первого)
-        space_width = 0
-        if current_line:
-            space_bbox = draw.textbbox((0, 0), " ", font=test_font)
-            space_width = space_bbox[2] - space_bbox[0]
-        
-        if current_line_width + space_width + word_width <= max_width:
-            if current_line:
-                current_line_width += space_width
-            current_line.append((word, is_highlighted))
-            current_line_width += word_width
-        else:
-            if current_line:
-                lines.append(current_line)
-            current_line = [(word, is_highlighted)]
-            current_line_width = word_width
-    
-    if current_line:
-        lines.append(current_line)
-    
-    # Рисуем строки
-    current_y = y
-    for line in lines:
-        current_x = x
-        for word, is_highlighted in line:
-            font = purple_font if is_highlighted else title_font
-            color = '#6C3CE1' if is_highlighted else 'black'
-            draw.text((current_x, current_y), word, font=font, fill=color)
-            
-            word_bbox = draw.textbbox((0, 0), word, font=font)
-            word_width = word_bbox[2] - word_bbox[0]
-            current_x += word_width
-            
-            # Добавляем пробел после слова (кроме последнего)
-            if word != line[-1][0]:
-                space_bbox = draw.textbbox((0, 0), " ", font=font)
-                space_width = space_bbox[2] - space_bbox[0]
-                current_x += space_width
-        
-        # Высота строки - ТОЧНО КАК В ОРИГИНАЛЬНОМ БОТЕ
-        # В оригинальном боте нет дополнительного интервала между строками
-        line_bbox = draw.textbbox((0, 0), "A", font=title_font)
-        line_height = line_bbox[3] - line_bbox[1]
-        current_y += line_height  # БЕЗ дополнительного интервала
-    
-    return current_y
-
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
 async def generate_story(photo_path: str, title: str, content: str, rubric: str, highlight_words: list) -> str:
     logging.info(f"🖼 Генерация сторис:")
@@ -318,11 +246,12 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
     logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
     
     # ============================================================
-    # ШАГ 4: ЗАГОЛОВОК - ТОЧНО КАК В ОРИГИНАЛЬНОМ БОТЕ
+    # ШАГ 4: ЗАГОЛОВОК (ТОЧНО КАК В ОРИГИНАЛЬНОМ БОТЕ)
     # ============================================================
     title_y = TITLE_TOP
     max_title_height = 240
     
+    # Подбираем размер шрифта как в оригинале
     title_font_size = 56
     title_lines = []
     
@@ -373,26 +302,39 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
         title_lines = lines
         title_font_size = 32
     
-    # Рисуем заголовок - используем логику оригинального бота
+    # Рисуем заголовок построчно с выделением
     title_font = load_font(title_font_size, 'bold')
-    title_text = "\n".join(title_lines)
+    purple_font = load_font(title_font_size, 'bold')
     
-    # Проверяем выделенные слова и рисуем с подсветкой
-    # Для этого используем нашу функцию, но с правильным межстрочным интервалом
-    title_end_y = draw_title_with_highlight(
-        draw, 
-        title, 
-        highlight_words, 
-        50, 
-        title_y, 
-        TITLE_MAX_WIDTH, 
-        title_font_size
-    )
+    current_y = title_y
+    for line in title_lines:
+        # Разбиваем строку на слова
+        words_in_line = line.split()
+        current_x = 50
+        
+        for word in words_in_line:
+            # Проверяем, нужно ли выделить слово
+            is_highlighted = word in [w.upper() for w in highlight_words]
+            font = purple_font if is_highlighted else title_font
+            color = '#6C3CE1' if is_highlighted else 'black'
+            
+            draw.text((current_x, current_y), word, font=font, fill=color)
+            
+            word_bbox = draw.textbbox((0, 0), word, font=font)
+            word_width = word_bbox[2] - word_bbox[0]
+            current_x += word_width + 10  # пробел между словами
+        
+        # Переход на следующую строку - ТОЧНО КАК В ОРИГИНАЛЕ
+        line_bbox = draw.textbbox((0, 0), "A", font=title_font)
+        line_height = line_bbox[3] - line_bbox[1]
+        current_y += line_height
+    
+    title_end_y = current_y
     
     logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}")
     
     # ============================================================
-    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ (в 2 раза толще)
+    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ
     # ============================================================
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
     draw.rectangle(
@@ -537,7 +479,6 @@ async def handle_photo_or_document(message: types.Message):
     user_id = message.from_user.id
     is_forward = message.forward_from or message.forward_from_chat or message.forward_date
     
-    # Обработка репоста
     if is_forward:
         await message.answer("📥 Обнаружен репост! Обрабатываю...")
         
@@ -595,7 +536,7 @@ async def handle_photo_or_document(message: types.Message):
         )
         return
     
-    # Ручной ввод фото без репоста
+    # Ручной ввод фото
     if user_id not in user_data:
         user_data[user_id] = {"step": "waiting_photo"}
     
@@ -623,7 +564,6 @@ async def handle_photo_or_document(message: types.Message):
         )
         return
     
-    # Если фото без подписи
     file = await bot.get_file(message.photo[-1].file_id)
     file_path = f"temp_{user_id}.jpg"
     await bot.download_file(file.file_path, file_path)
@@ -644,14 +584,12 @@ async def handle_text(message: types.Message):
     
     step = user_data[user_id].get("step", "")
     
-    # Шаг 1: Ожидание заголовка
     if step == "waiting_title":
         user_data[user_id]["title"] = message.text
         user_data[user_id]["step"] = "waiting_content"
         await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
         return
     
-    # Шаг 2: Ожидание основного текста
     if step == "waiting_content":
         user_data[user_id]["content"] = message.text
         title = user_data[user_id]["title"]
@@ -666,7 +604,6 @@ async def handle_text(message: types.Message):
         user_data[user_id]["step"] = "waiting_highlight_words"
         return
     
-    # Шаг 3: Ожидание слов для выделения
     if step == "waiting_highlight_words":
         text = message.text.strip()
         
