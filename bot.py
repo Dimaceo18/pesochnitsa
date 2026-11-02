@@ -58,7 +58,7 @@ I_PHOTO_LEFT = 0
 I_MARGIN_X = 32
 I_TITLE_TOP = I_PHOTO_HEIGHT + 28
 
-I_TITLE_FONT_MAX = 54   # Максимальный размер шрифта
+I_TITLE_FONT_MAX = 54
 I_TITLE_FONT_MIN = 20
 I_TITLE_PLATE_PAD_X = 18
 I_TITLE_PLATE_PAD_Y = 10
@@ -389,7 +389,6 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     canvas = Image.new('RGB', (IW, IH), color=I_BG_COLOR)
     draw = ImageDraw.Draw(canvas)
 
-    # ФОТО
     try:
         if os.path.exists(photo_path):
             photo = Image.open(photo_path).convert("RGB")
@@ -407,13 +406,9 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
 
     max_width = IW - 2 * I_MARGIN_X
 
-    # УМНЫЙ ПОДБОР ШРИФТА ДЛЯ ЗАГОЛОВКА
-    # Не раздуваем шрифт ради 1-2 слов. Цель: от 2 до 4 строк, но не более 260px высоты.
     title_font_size = I_TITLE_FONT_MAX
     title_lines = []
 
-    # Идём от большого к маленькому. 
-    # Хотим: строк от 2 до 4, и высота блока заголовка не более ~260px (чтобы осталось место под текст).
     for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
         tf = load_font(size, 'bold')
         lines = wrap_title_lines(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
@@ -423,18 +418,15 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
         total_h = len(lines) * plate_h + (len(lines) - 1) * I_TITLE_LINE_GAP
         
-        # Условие: если строк 2-3-4, и высота влезает — берем этот размер.
-        # Если строк 1 (очень короткий заголовок) — тоже берем, но ограничиваем макс размером.
         if 2 <= len(lines) <= 4 and total_h <= 260:
             title_font_size = size
             title_lines = lines
             break
-        elif len(lines) == 1 and size <= 42:  # для очень коротких заголовков
+        elif len(lines) == 1 and size <= 42:
             title_font_size = size
             title_lines = lines
             break
 
-    # Если не подобрали (слишком длинный текст), берем минимальный и рвем
     if not title_lines:
         tf = load_font(I_TITLE_FONT_MIN, 'bold')
         title_lines = wrap_title_lines(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
@@ -445,7 +437,6 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     lh = lb[3] - lb[1]
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
 
-    # РИСУЕМ ЗАГОЛОВОК
     cur_y = I_TITLE_TOP
     for line in title_lines:
         wb = draw.textbbox((0, 0), line, font=title_font)
@@ -456,17 +447,14 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         x2 = x1 + plate_w
         y2 = y1 + plate_h
         
-        # Рисуем белую плашку (без обводки)
         draw_rounded_rect(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, I_TITLE_PLATE_COLOR)
         
-        # Текст по центру плашки
         tx = x1 + (plate_w - line_w) // 2
         ty = y1 + I_TITLE_PLATE_PAD_Y - 2
         draw.text((tx, ty), line, font=title_font, fill=I_TITLE_TEXT_COLOR)
         
         cur_y = y2 + I_TITLE_LINE_GAP
 
-    # ОСНОВНОЙ ТЕКСТ
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
 
@@ -587,7 +575,7 @@ async def start(message: types.Message):
         user_id,
         "📱 Привет! Я делаю стильные сторис!\n\n"
         "Отправь мне РЕПОСТ любого поста с фото и текстом.\n"
-        "Дальше — слова для выделения, шаблон, тема и рубрика.\n\n"
+        "Дальше — шаблон, тема, рубрика и выделение слов (если нужно).\n\n"
         "✨ Эмодзи и смайлики из текста автоматически убираются."
     )
 
@@ -640,15 +628,14 @@ async def handle_photo_or_document(message: types.Message):
             "title": title,
             "content": content,
             "highlight_words": [],
-            "step": "waiting_highlight_words"
+            "step": "waiting_template"  # СРАЗУ ШАГ ВЫБОРА ШАБЛОНА
         }
 
         await bot.send_message(
             user_id,
             f"📝 Заголовок:\n{title}\n\n"
-            f"✏️ Отправь слова для выделения фиолетовым (через запятую/пробел).\n"
-            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
-            f"Если не нужно — отправь 'нет' или '-'"
+            f"🖼 Выберите шаблон оформления:",
+            reply_markup=get_template_keyboard()
         )
         return
 
@@ -668,15 +655,14 @@ async def handle_photo_or_document(message: types.Message):
             "title": title,
             "content": content,
             "highlight_words": [],
-            "step": "waiting_highlight_words"
+            "step": "waiting_template"  # СРАЗУ ШАГ ВЫБОРА ШАБЛОНА
         }
 
         await bot.send_message(
             user_id,
             f"📝 Заголовок:\n{title}\n\n"
-            f"✏️ Отправь слова для выделения фиолетовым (через запятую/пробел).\n"
-            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
-            f"Если не нужно — отправь 'нет' или '-'"
+            f"🖼 Выберите шаблон оформления:",
+            reply_markup=get_template_keyboard()
         )
         return
 
@@ -706,15 +692,13 @@ async def handle_text(message: types.Message):
 
     if step == "waiting_content":
         user_data[user_id]["content"] = remove_emojis(message.text)
-        title = user_data[user_id]["title"]
+        user_data[user_id]["step"] = "waiting_template"
         await bot.send_message(
             user_id,
-            f"📝 Заголовок:\n{title}\n\n"
-            f"✏️ Отправь слова для выделения фиолетовым (через запятую/пробел).\n"
-            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
-            f"Если не нужно — отправь 'нет' или '-'"
+            "✅ Текст сохранен!\n\n"
+            "🖼 Выберите шаблон оформления:",
+            reply_markup=get_template_keyboard()
         )
-        user_data[user_id]["step"] = "waiting_highlight_words"
         return
 
     if step == "waiting_highlight_words":
@@ -729,13 +713,13 @@ async def handle_text(message: types.Message):
             words = [w for w in words if len(w) > 2]
             user_data[user_id]["highlight_words"] = words
 
-        user_data[user_id]["step"] = "waiting_template"
+        user_data[user_id]["step"] = "waiting_theme"
         hl = f"Выделенные слова: {', '.join(user_data[user_id]['highlight_words']) if user_data[user_id]['highlight_words'] else 'Нет'}"
         await bot.send_message(
             user_id,
             f"✅ Слова сохранены!\n{hl}\n\n"
-            f"🖼 Выберите шаблон оформления:",
-            reply_markup=get_template_keyboard()
+            f"🎨 Выберите тему оформления:",
+            reply_markup=get_theme_keyboard()
         )
         return
 
@@ -755,19 +739,23 @@ async def process_template_callback(callback_query: types.CallbackQuery):
     await safe_remove_keyboard(callback_query.message)
 
     if template == "classic":
-        user_data[user_id]["step"] = "waiting_theme"
+        # Если классик — сначала спрашиваем выделение слов
+        user_data[user_id]["step"] = "waiting_highlight_words"
+        title = user_data[user_id]["title"]
         await bot.send_message(
             user_id,
-            "🎨 Шаблон: Классик\n\nВыберите тему оформления:",
-            reply_markup=get_theme_keyboard()
+            f"🎨 Шаблон: Классик\n\n"
+            f"✏️ Отправь слова для выделения фиолетовым (через запятую/пробел).\n"
+            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
+            f"Если не нужно — отправь 'нет' или '-'"
         )
     else:
+        # Если инста — выделение слов не нужно, сразу переходим к рубрике
         user_data[user_id]["step"] = "waiting_rubric"
         await bot.send_message(
             user_id,
             "📸 Шаблон: Инста-дизайн\n\n"
-            "Рубрика в этом шаблоне не отображается на картинке, "
-            "но можно указать (или «Без рубрики»):",
+            "Выберите рубрику (в этом шаблоне она не отображается на картинке, но можно указать «Без рубрики»):",
             reply_markup=get_rubric_keyboard()
         )
 
