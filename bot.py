@@ -62,7 +62,6 @@ I_TITLE_FONT_MIN = 20
 I_TITLE_PLATE_PAD_X = 18
 I_TITLE_PLATE_PAD_Y = 10
 I_TITLE_PLATE_RADIUS = 16
-# Плашки перекрываются на 1px, чтобы не было видно чёрных швов между скруглениями
 I_TITLE_LINE_GAP = -1
 
 I_TEXT_TOP_GAP = 24
@@ -70,11 +69,6 @@ I_TEXT_FONT_MAX = 30
 I_TEXT_FONT_MIN = 16
 I_TEXT_LINE_GAP = 6
 I_TEXT_PARA_GAP = 16
-
-I_BG_COLOR = 'black'
-I_TITLE_TEXT_COLOR = 'black'
-I_TITLE_PLATE_COLOR = 'white'
-I_BODY_TEXT_COLOR = 'white'
 
 RUBRICS = ["НОВОСТИ", "АФИША", "СПОРТ", "ФИНАНСЫ", "АВТО", "НЕДВИЖИМОСТЬ"]
 
@@ -384,11 +378,32 @@ def wrap_title_lines_max_words(draw, text, font, max_width, max_words_per_line=3
         lines.append(' '.join(cur))
     return lines
 
-async def generate_story_insta(photo_path: str, title: str, content: str,
-                               highlight_words: list) -> str:
-    logging.info("🖼 [insta] генерация")
+async def generate_story_insta(photo_path: str, title: str, content: str, theme: str = "dark") -> str:
+    """
+    Инста-шаблон.
+    theme="dark" -> чёрный фон, белый текст, белые плашки заголовка.
+    theme="light" -> белый фон, чёрный текст, чёрные плашки заголовка.
+    """
+    logging.info(f"🖼 [insta] генерация (тема: {theme})")
 
-    canvas = Image.new('RGB', (IW, IH), color=I_BG_COLOR)
+    if theme == "dark":
+        bg_color = 'black'
+        text_color = 'white'
+        plate_color = 'white'
+        title_text_color = 'black'
+        placeholder_bg = '#111111'
+        placeholder_outline = '#333333'
+        placeholder_text = '#666666'
+    else:
+        bg_color = 'white'
+        text_color = 'black'
+        plate_color = 'black'
+        title_text_color = 'white'
+        placeholder_bg = '#f0f0f0'
+        placeholder_outline = '#cccccc'
+        placeholder_text = '#999999'
+
+    canvas = Image.new('RGB', (IW, IH), color=bg_color)
     draw = ImageDraw.Draw(canvas)
 
     try:
@@ -402,14 +417,12 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     except Exception as e:
         logging.error(f"❌ Фото: {e}")
         draw.rectangle([I_PHOTO_LEFT, I_PHOTO_TOP, I_PHOTO_LEFT + I_PHOTO_WIDTH, I_PHOTO_TOP + I_PHOTO_HEIGHT],
-                      fill='#111111', outline='#333333', width=2)
+                      fill=placeholder_bg, outline=placeholder_outline, width=2)
         draw.text((IW // 2 - 50, I_PHOTO_HEIGHT // 2 - 10),
-                 "📷 ФОТО", font=load_font(28, 'bold'), fill='#666666')
+                 "📷 ФОТО", font=load_font(28, 'bold'), fill=placeholder_text)
 
     max_width = IW - 2 * I_MARGIN_X
 
-    # ЛОГИКА: определяем, сколько слов в заголовке.
-    # Если мало (<= 9 слов), стараемся в 3 строки. Если много — до 4 строк.
     title_words_count = len(title.upper().split())
     max_lines_allowed = 3 if title_words_count <= 9 else 4
 
@@ -450,14 +463,11 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         x2 = x1 + plate_w
         y2 = y1 + plate_h
         
-        # Рисуем полноценную скругленную плашку. 
-        # Из-за I_TITLE_LINE_GAP = -1 они перекрываются и не имеют видимых швов.
-        draw_rounded_rect(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, I_TITLE_PLATE_COLOR)
+        draw_rounded_rect(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, plate_color)
         
-        # Центрируем текст на плашке
         center_x = x1 + plate_w / 2
         center_y = y1 + plate_h / 2
-        draw.text((center_x, center_y), line, font=title_font, fill=I_TITLE_TEXT_COLOR, anchor="mm")
+        draw.text((center_x, center_y), line, font=title_font, fill=title_text_color, anchor="mm")
         
         cur_y = y2 + I_TITLE_LINE_GAP
 
@@ -502,11 +512,11 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     pos_y = text_y
     for para_lines in wrapped_paragraphs:
         for line in para_lines:
-            draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=I_BODY_TEXT_COLOR)
+            draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=text_color)
             pos_y += sh + I_TEXT_LINE_GAP
         pos_y += I_TEXT_PARA_GAP
 
-    output_path = "output_story_insta.png"
+    output_path = f"output_story_insta_{theme}.png"
     canvas.save(output_path, format='PNG')
     return output_path
 
@@ -515,7 +525,8 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
                          highlight_words: list, theme: str = "light",
                          template: str = "classic") -> str:
     if template == "insta":
-        return await generate_story_insta(photo_path, title, content, highlight_words)
+        # Для инсты theme="dark" (чёрный фон) или "light" (белый фон)
+        return await generate_story_insta(photo_path, title, content, theme)
     return await generate_story_classic(photo_path, title, content, rubric, highlight_words, theme)
 
 # ========== ОБЩАЯ ФУНКЦИЯ ==========
@@ -755,13 +766,39 @@ async def process_template_callback(callback_query: types.CallbackQuery):
             f"Если не нужно — отправь 'нет' или '-'"
         )
     else:
-        user_data[user_id]["step"] = "waiting_rubric"
+        # Для Инсты сразу генерируем два варианта
+        user_data[user_id]["step"] = "waiting_generation"
+        photo_path = user_data[user_id]["photo"]
+        title = user_data[user_id]["title"]
+        content = user_data[user_id]["content"]
+        
         await bot.send_message(
             user_id,
-            "📸 Шаблон: Инста-дизайн\n\n"
-            "Выберите рубрику (в этом шаблоне она не отображается на картинке, но можно указать «Без рубрики»):",
-            reply_markup=get_rubric_keyboard()
+            "⏳ Генерирую два варианта в шаблоне «Инста-дизайн»...\n"
+            "1. Чёрно-белый (чёрный фон)\n"
+            "2. Бело-чёрный (белый фон)"
         )
+        
+        # Вариант 1: Чёрно-белый (чёрный фон, белый текст)
+        dark_output = await generate_story_insta(photo_path, title, content, theme="dark")
+        with open(dark_output, 'rb') as photo_file:
+            await bot.send_photo(chat_id=user_id, photo=photo_file, caption="1. Чёрно-белый (чёрный фон)")
+        
+        # Вариант 2: Бело-чёрный (белый фон, чёрный текст)
+        light_output = await generate_story_insta(photo_path, title, content, theme="light")
+        with open(light_output, 'rb') as photo_file:
+            await bot.send_photo(chat_id=user_id, photo=photo_file, caption="2. Бело-чёрный (белый фон)")
+        
+        # Удаляем временные файлы
+        for file_path in [photo_path, dark_output, light_output]:
+            try:
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+            except Exception as e:
+                logging.warning(f"⚠️ Не удалось удалить {file_path}: {e}")
+        
+        if user_id in user_data:
+            del user_data[user_id]
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('theme_'))
 async def process_theme_callback(callback_query: types.CallbackQuery):
