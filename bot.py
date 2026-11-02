@@ -2,6 +2,7 @@ import os
 import logging
 import re
 import random
+import unicodedata
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
@@ -84,6 +85,43 @@ def load_font(size, weight='regular'):
             continue
 
     return ImageFont.load_default()
+
+# ========== ОЧИСТКА ОТ ЭМОДЗИ ==========
+def remove_emojis(text: str) -> str:
+    """Удаляет эмодзи/смайлики и лишние пробелы из текста."""
+    if not text:
+        return text
+
+    cleaned_chars = []
+    for ch in text:
+        code = ord(ch)
+        # Основные диапазоны эмодзи и пиктограмм
+        if (
+            0x1F300 <= code <= 0x1FAFF or   # эмодзи, пиктограммы, транспорт, флаги, доп. символы
+            0x1F000 <= code <= 0x1F2FF or   # маджонг, карты, прочие эмодзи
+            0x2600 <= code <= 0x27BF or     # разные символы и дингбаты
+            0x2B00 <= code <= 0x2BFF or     # стрелки и геом. фигуры
+            0xFE00 <= code <= 0xFE0F or     # variation selectors
+            0x1F1E6 <= code <= 0x1F1FF or   # региональные индикаторы (флаги)
+            0xE0020 <= code <= 0xE007F      # теги
+        ):
+            continue
+        # Прочие пиктограммы категории So (кроме пробелов/неразрывных)
+        if unicodedata.category(ch) == 'So':
+            continue
+        cleaned_chars.append(ch)
+
+    cleaned = ''.join(cleaned_chars)
+
+    # Убираем пробелы перед знаками препинания
+    cleaned = re.sub(r'\s+([,.!?;:…»)])', r'\1', cleaned)
+    # Схлопываем повторные пробелы
+    cleaned = re.sub(r'[ \t]{2,}', ' ', cleaned)
+    # Убираем пробелы в начале/конце строк
+    cleaned = '\n'.join(line.strip() for line in cleaned.split('\n'))
+    # Убираем лишние пустые строки (более двух подряд)
+    cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
+    return cleaned.strip()
 
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
@@ -493,7 +531,8 @@ async def start(message: types.Message):
         "📱 Привет! Я делаю стильные сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста с фото и текстом.\n"
         "Затем я попрошу ввести слова для выделения (через запятую или пробел).\n"
-        "Потом выбери тему и рубрику!"
+        "Потом выбери тему и рубрику!\n\n"
+        "✨ Эмодзи и смайлики из текста автоматически убираются."
     )
 
 @dp.message_handler(content_types=['photo', 'document'])
@@ -527,6 +566,9 @@ async def handle_photo_or_document(message: types.Message):
             if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
                 clean_lines.append(line)
         text = '\n'.join(clean_lines)
+
+        # ✨ Убираем эмодзи/смайлики из всего текста
+        text = remove_emojis(text)
 
         title, content = parse_text(text)
 
@@ -564,6 +606,8 @@ async def handle_photo_or_document(message: types.Message):
 
     caption = message.caption or ""
     if caption:
+        # ✨ Убираем эмодзи/смайлики из подписи
+        caption = remove_emojis(caption)
         title, content = parse_text(caption)
         file = await bot.get_file(message.photo[-1].file_id)
         file_path = f"temp_{user_id}.jpg"
@@ -607,13 +651,17 @@ async def handle_text(message: types.Message):
     step = user_data[user_id].get("step", "")
 
     if step == "waiting_title":
-        user_data[user_id]["title"] = message.text
+        # ✨ Очищаем заголовок от эмодзи
+        clean_title = remove_emojis(message.text)
+        user_data[user_id]["title"] = clean_title
         user_data[user_id]["step"] = "waiting_content"
         await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
         return
 
     if step == "waiting_content":
-        user_data[user_id]["content"] = message.text
+        # ✨ Очищаем текст от эмодзи
+        clean_content = remove_emojis(message.text)
+        user_data[user_id]["content"] = clean_content
         title = user_data[user_id]["title"]
 
         await message.answer(
