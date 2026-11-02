@@ -18,7 +18,6 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
-# Шрифты
 FONT_PATHS = [
     "Inter-Bold.ttf",
     "Inter-Regular.ttf",
@@ -31,7 +30,6 @@ FONT_PATHS = [
 
 # ========== КЛАССИЧЕСКИЙ ШАБЛОН (1080x1920) ==========
 W, H = 1080, 1920
-
 PHOTO_TOP = 0
 PHOTO_HEIGHT = 900
 PHOTO_WIDTH = W
@@ -45,10 +43,8 @@ RUBRIC_PADDING_Y = 12
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 90
 TITLE_MAX_WIDTH = W - 100
 TITLE_LINE_SPACING = 12
-
 LINE_TOP_OFFSET = 27
 LINE_HEIGHT = 8
-
 TEXT_TOP_OFFSET = 15
 
 # ========== ИНСТА-ШАБЛОН (720x1280) ==========
@@ -62,14 +58,14 @@ I_PHOTO_LEFT = 0
 I_MARGIN_X = 32
 I_TITLE_TOP = I_PHOTO_HEIGHT + 28
 
-I_TITLE_FONT_MAX = 58
-I_TITLE_FONT_MIN = 26
+I_TITLE_FONT_MAX = 54   # Максимальный размер шрифта
+I_TITLE_FONT_MIN = 20
 I_TITLE_PLATE_PAD_X = 18
-I_TITLE_PLATE_PAD_Y = 8
-I_TITLE_PLATE_RADIUS = 14
+I_TITLE_PLATE_PAD_Y = 10
+I_TITLE_PLATE_RADIUS = 16
 I_TITLE_LINE_GAP = 8
 
-I_TEXT_TOP_GAP = 26
+I_TEXT_TOP_GAP = 24
 I_TEXT_FONT_MAX = 30
 I_TEXT_FONT_MIN = 16
 I_TEXT_LINE_GAP = 6
@@ -80,18 +76,14 @@ I_TITLE_TEXT_COLOR = 'black'
 I_TITLE_PLATE_COLOR = 'white'
 I_BODY_TEXT_COLOR = 'white'
 
-# ========== РУБРИКИ ==========
 RUBRICS = ["НОВОСТИ", "АФИША", "СПОРТ", "ФИНАНСЫ", "АВТО", "НЕДВИЖИМОСТЬ"]
 
-# ========== НАСТРОЙКА ЛОГОВ ==========
 logging.basicConfig(level=logging.INFO)
 
-# ========== ИНИЦИАЛИЗАЦИЯ ==========
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-# ========== ЗАГРУЗКА ШРИФТОВ ==========
 def load_font(size, weight='regular'):
     font_names = {
         'bold': FONT_PATHS[:3],
@@ -107,22 +99,16 @@ def load_font(size, weight='regular'):
             continue
     return ImageFont.load_default()
 
-# ========== ОЧИСТКА ОТ ЭМОДЗИ ==========
 def remove_emojis(text: str) -> str:
     if not text:
         return text
     cleaned_chars = []
     for ch in text:
         code = ord(ch)
-        if (
-            0x1F300 <= code <= 0x1FAFF or
-            0x1F000 <= code <= 0x1F2FF or
-            0x2600 <= code <= 0x27BF or
-            0x2B00 <= code <= 0x2BFF or
-            0xFE00 <= code <= 0xFE0F or
-            0x1F1E6 <= code <= 0x1F1FF or
-            0xE0020 <= code <= 0xE007F
-        ):
+        if (0x1F300 <= code <= 0x1FAFF or 0x1F000 <= code <= 0x1F2FF or
+            0x2600 <= code <= 0x27BF or 0x2B00 <= code <= 0x2BFF or
+            0xFE00 <= code <= 0xFE0F or 0x1F1E6 <= code <= 0x1F1FF or
+            0xE0020 <= code <= 0xE007F):
             continue
         if unicodedata.category(ch) == 'So':
             continue
@@ -134,7 +120,6 @@ def remove_emojis(text: str) -> str:
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
 
-# ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
     if not text:
         return "", ""
@@ -181,13 +166,11 @@ def parse_text(text: str) -> tuple:
             title = title[:147] + "..."
     return title, content
 
-# ========== ОБРАБОТКА ФОТО ==========
 def apply_photo_effect(image: Image.Image) -> Image.Image:
     if image.mode != 'RGB':
         image = image.convert('RGB')
     enhancer = ImageEnhance.Color(image)
     image = enhancer.enhance(1.05)
-
     pixel_data = list(image.getdata())
     width, height = image.size
     noise_intensity = 12
@@ -223,7 +206,6 @@ def fit_photo(photo: Image.Image, target_w: int, target_h: int) -> Image.Image:
 async def generate_story_classic(photo_path: str, title: str, content: str, rubric: str,
                                  highlight_words: list, theme: str = "light") -> str:
     logging.info(f"🖼 [classic] тема: {theme}, рубрика: {rubric or 'БЕЗ'}")
-
     is_dark = (theme == "dark")
     bg_color = 'black' if is_dark else 'white'
     text_color = 'white' if is_dark else 'black'
@@ -407,6 +389,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     canvas = Image.new('RGB', (IW, IH), color=I_BG_COLOR)
     draw = ImageDraw.Draw(canvas)
 
+    # ФОТО
     try:
         if os.path.exists(photo_path):
             photo = Image.open(photo_path).convert("RGB")
@@ -423,19 +406,35 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
                  "📷 ФОТО", font=load_font(28, 'bold'), fill='#666666')
 
     max_width = IW - 2 * I_MARGIN_X
+
+    # УМНЫЙ ПОДБОР ШРИФТА ДЛЯ ЗАГОЛОВКА
+    # Не раздуваем шрифт ради 1-2 слов. Цель: от 2 до 4 строк, но не более 260px высоты.
     title_font_size = I_TITLE_FONT_MAX
     title_lines = []
-    for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -2):
+
+    # Идём от большого к маленькому. 
+    # Хотим: строк от 2 до 4, и высота блока заголовка не более ~260px (чтобы осталось место под текст).
+    for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
         tf = load_font(size, 'bold')
         lines = wrap_title_lines(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
+        
         lb = draw.textbbox((0, 0), "A", font=tf)
         lh = lb[3] - lb[1]
         plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
         total_h = len(lines) * plate_h + (len(lines) - 1) * I_TITLE_LINE_GAP
-        if total_h <= 260 and len(lines) <= 4:
+        
+        # Условие: если строк 2-3-4, и высота влезает — берем этот размер.
+        # Если строк 1 (очень короткий заголовок) — тоже берем, но ограничиваем макс размером.
+        if 2 <= len(lines) <= 4 and total_h <= 260:
             title_font_size = size
             title_lines = lines
             break
+        elif len(lines) == 1 and size <= 42:  # для очень коротких заголовков
+            title_font_size = size
+            title_lines = lines
+            break
+
+    # Если не подобрали (слишком длинный текст), берем минимальный и рвем
     if not title_lines:
         tf = load_font(I_TITLE_FONT_MIN, 'bold')
         title_lines = wrap_title_lines(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
@@ -446,6 +445,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     lh = lb[3] - lb[1]
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
 
+    # РИСУЕМ ЗАГОЛОВОК
     cur_y = I_TITLE_TOP
     for line in title_lines:
         wb = draw.textbbox((0, 0), line, font=title_font)
@@ -455,12 +455,18 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         y1 = cur_y
         x2 = x1 + plate_w
         y2 = y1 + plate_h
+        
+        # Рисуем белую плашку (без обводки)
         draw_rounded_rect(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, I_TITLE_PLATE_COLOR)
+        
+        # Текст по центру плашки
         tx = x1 + (plate_w - line_w) // 2
         ty = y1 + I_TITLE_PLATE_PAD_Y - 2
         draw.text((tx, ty), line, font=title_font, fill=I_TITLE_TEXT_COLOR)
+        
         cur_y = y2 + I_TITLE_LINE_GAP
 
+    # ОСНОВНОЙ ТЕКСТ
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
 
@@ -471,7 +477,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
 
     text_font_size = I_TEXT_FONT_MAX
     wrapped_paragraphs = []
-    for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -2):
+    for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
         tf = load_font(size, 'regular')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
@@ -826,16 +832,12 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
 
 # ========== ЗАПУСК ==========
 async def on_startup(dp):
-    """Перед стартом polling: сбрасываем вебхук и ждём, чтобы старое
-    соединение getUpdates успело закрыться на стороне Telegram."""
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         print("✅ Вебхук удален, pending updates сброшены")
     except Exception as e:
         print(f"⚠️ Ошибка удаления вебхука: {e}")
 
-    # Небольшая пауза: если старый инстанс только что умер,
-    # Telegram ещё может держать его соединение. Дадим ему закрыться.
     await asyncio.sleep(3)
 
     try:
@@ -844,15 +846,12 @@ async def on_startup(dp):
     except Exception as e:
         print(f"⚠️ get_me failed: {e}")
 
-
 async def on_shutdown(dp):
-    """Корректно закрываем сессию, чтобы не оставалось висящих соединений."""
     try:
         await bot.close()
         print("✅ Сессия бота закрыта")
     except Exception as e:
         print(f"⚠️ Ошибка при закрытии сессии: {e}")
-
 
 if __name__ == "__main__":
     from aiogram import executor
@@ -860,7 +859,6 @@ if __name__ == "__main__":
     print("🚀 Бот запускается...")
     print("⚠️ Убедитесь, что запущен только ОДИН экземпляр бота!")
 
-    # На случай, если первый polling упадёт из-за конфликта — ретраим
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
@@ -872,8 +870,7 @@ if __name__ == "__main__":
             )
             break
         except TerminatedByOtherGetUpdates:
-            print(f"⚠️ Конфликт getUpdates (попытка {attempt}/{max_attempts}). "
-                  f"Ждём 5 секунд и пробуем снова...")
+            print(f"⚠️ Конфликт getUpdates (попытка {attempt}/{max_attempts}). Ждём 5 секунд...")
             import time
             time.sleep(5)
         except Exception as e:
