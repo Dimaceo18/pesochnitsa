@@ -2,11 +2,13 @@ import os
 import logging
 import re
 import random
+import asyncio
 import unicodedata
 from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.utils.exceptions import TerminatedByOtherGetUpdates
 import textwrap
 import io
 
@@ -53,21 +55,21 @@ TEXT_TOP_OFFSET = 15
 IW, IH = 720, 1280
 
 I_PHOTO_TOP = 0
-I_PHOTO_HEIGHT = 520          # ~40% высоты под фото
+I_PHOTO_HEIGHT = 520
 I_PHOTO_WIDTH = IW
 I_PHOTO_LEFT = 0
 
-I_MARGIN_X = 32               # боковые поля
+I_MARGIN_X = 32
 I_TITLE_TOP = I_PHOTO_HEIGHT + 28
 
 I_TITLE_FONT_MAX = 58
 I_TITLE_FONT_MIN = 26
-I_TITLE_PLATE_PAD_X = 18      # горизонтальный паддинг внутри плашки
-I_TITLE_PLATE_PAD_Y = 8       # вертикальный паддинг
-I_TITLE_PLATE_RADIUS = 14     # радиус скругления плашки
-I_TITLE_LINE_GAP = 8          # зазор между плашками
+I_TITLE_PLATE_PAD_X = 18
+I_TITLE_PLATE_PAD_Y = 8
+I_TITLE_PLATE_RADIUS = 14
+I_TITLE_LINE_GAP = 8
 
-I_TEXT_TOP_GAP = 26           # отступ от заголовка до основного текста
+I_TEXT_TOP_GAP = 26
 I_TEXT_FONT_MAX = 30
 I_TEXT_FONT_MIN = 16
 I_TEXT_LINE_GAP = 6
@@ -77,7 +79,6 @@ I_BG_COLOR = 'black'
 I_TITLE_TEXT_COLOR = 'black'
 I_TITLE_PLATE_COLOR = 'white'
 I_BODY_TEXT_COLOR = 'white'
-I_PHOTO_BORDER = None         # без обводки
 
 # ========== РУБРИКИ ==========
 RUBRICS = ["НОВОСТИ", "АФИША", "СПОРТ", "ФИНАНСЫ", "АВТО", "НЕДВИЖИМОСТЬ"]
@@ -233,7 +234,6 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
     canvas = Image.new('RGB', (W, H), color=bg_color)
     draw = ImageDraw.Draw(canvas)
 
-    # ФОТО
     try:
         if os.path.exists(photo_path):
             photo = Image.open(photo_path).convert("RGB")
@@ -249,7 +249,6 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
         draw.text((W//2 - 60, PHOTO_TOP + PHOTO_HEIGHT//2 - 10),
                  "📷 ФОТО", font=load_font(36, 'bold'), fill=placeholder_text)
 
-    # РУБРИКА
     if rubric:
         rf = load_font(34, 'bold')
         rb = draw.textbbox((0, 0), rubric, font=rf)
@@ -262,7 +261,6 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
         draw.text((x1 + (x2 - x1 - rw) // 2, y1 + (y2 - y1 - rh) // 2 - 4),
                   rubric, font=rf, fill='white')
 
-    # ЗАГОЛОВОК
     title_y = TITLE_TOP
     max_title_height = 380
     title_font_size = 56
@@ -323,11 +321,9 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
         current_y += lh + TITLE_LINE_SPACING
     title_end_y = current_y - TITLE_LINE_SPACING
 
-    # ЛИНИЯ
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
     draw.rectangle([50, LINE_TOP, W - 50, LINE_TOP + LINE_HEIGHT], fill='#6C3CE1')
 
-    # ТЕКСТ
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
     available_text_height = H - text_y - 50
     if content and content != "Текст отсутствует":
@@ -378,7 +374,6 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
 
 # ========== ГЕНЕРАЦИЯ: ИНСТА-ШАБЛОН ==========
 def draw_rounded_rect(draw, box, radius, fill):
-    """Рисует скруглённый прямоугольник (совместимо с Pillow без rounded_rectangle)."""
     x1, y1, x2, y2 = box
     r = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
     if r <= 0:
@@ -407,14 +402,11 @@ def wrap_title_lines(draw, text, font, max_width):
 
 async def generate_story_insta(photo_path: str, title: str, content: str,
                                highlight_words: list) -> str:
-    """Инста-дизайн строго по образцу: чёрный фон, фото сверху, заголовок
-    чёрным по белым скруглённым плашкам, основной текст белым ПРОПИСНЫМИ."""
     logging.info("🖼 [insta] генерация")
 
     canvas = Image.new('RGB', (IW, IH), color=I_BG_COLOR)
     draw = ImageDraw.Draw(canvas)
 
-    # ФОТО сверху на всю ширину
     try:
         if os.path.exists(photo_path):
             photo = Image.open(photo_path).convert("RGB")
@@ -430,9 +422,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         draw.text((IW // 2 - 50, I_PHOTO_HEIGHT // 2 - 10),
                  "📷 ФОТО", font=load_font(28, 'bold'), fill='#666666')
 
-    # ПОДБОР РАЗМЕРА ШРИФТА ЗАГОЛОВКА под доступную высоту и ширину
     max_width = IW - 2 * I_MARGIN_X
-    # Сколько примерно строк получится — подберём шрифт так, чтобы влезло
     title_font_size = I_TITLE_FONT_MAX
     title_lines = []
     for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -2):
@@ -456,25 +446,21 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     lh = lb[3] - lb[1]
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
 
-    # РИСУЕМ ЗАГОЛОВОК (каждая строка — отдельная белая скруглённая плашка)
     cur_y = I_TITLE_TOP
     for line in title_lines:
         wb = draw.textbbox((0, 0), line, font=title_font)
         line_w = wb[2] - wb[0]
         plate_w = line_w + 2 * I_TITLE_PLATE_PAD_X
-        # выравниваем плашки по левому краю
         x1 = I_MARGIN_X
         y1 = cur_y
         x2 = x1 + plate_w
         y2 = y1 + plate_h
         draw_rounded_rect(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, I_TITLE_PLATE_COLOR)
-        # текст по центру плашки
         tx = x1 + (plate_w - line_w) // 2
         ty = y1 + I_TITLE_PLATE_PAD_Y - 2
         draw.text((tx, ty), line, font=title_font, fill=I_TITLE_TEXT_COLOR)
         cur_y = y2 + I_TITLE_LINE_GAP
 
-    # ОСНОВНОЙ ТЕКСТ
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
 
@@ -518,7 +504,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         for line in para_lines:
             draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=I_BODY_TEXT_COLOR)
             pos_y += sh + I_TEXT_LINE_GAP
-        pos_y += I_TEXT_PARА_GAP if False else I_TEXT_PARA_GAP  # (безопасно)
+        pos_y += I_TEXT_PARA_GAP
 
     output_path = "output_story_insta.png"
     canvas.save(output_path, format='PNG')
@@ -747,10 +733,7 @@ async def handle_text(message: types.Message):
         )
         return
 
-    await bot.send_message(
-        user_id,
-        "❓ Я не понял. Отправь /start, чтобы начать заново."
-    )
+    await bot.send_message(user_id, "❓ Я не понял. Отправь /start, чтобы начать заново.")
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('template_'))
 async def process_template_callback(callback_query: types.CallbackQuery):
@@ -769,12 +752,10 @@ async def process_template_callback(callback_query: types.CallbackQuery):
         user_data[user_id]["step"] = "waiting_theme"
         await bot.send_message(
             user_id,
-            "🎨 Шаблон: Классик\n\n"
-            "Выберите тему оформления:",
+            "🎨 Шаблон: Классик\n\nВыберите тему оформления:",
             reply_markup=get_theme_keyboard()
         )
     else:
-        # Инста-шаблон: тема не нужна (всегда чёрный фон), сразу к рубрике
         user_data[user_id]["step"] = "waiting_rubric"
         await bot.send_message(
             user_id,
@@ -844,20 +825,57 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
         del user_data[user_id]
 
 # ========== ЗАПУСК ==========
+async def on_startup(dp):
+    """Перед стартом polling: сбрасываем вебхук и ждём, чтобы старое
+    соединение getUpdates успело закрыться на стороне Telegram."""
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        print("✅ Вебхук удален, pending updates сброшены")
+    except Exception as e:
+        print(f"⚠️ Ошибка удаления вебхука: {e}")
+
+    # Небольшая пауза: если старый инстанс только что умер,
+    # Telegram ещё может держать его соединение. Дадим ему закрыться.
+    await asyncio.sleep(3)
+
+    try:
+        me = await bot.get_me()
+        print(f"✅ Бот: @{me.username} (id={me.id})")
+    except Exception as e:
+        print(f"⚠️ get_me failed: {e}")
+
+
+async def on_shutdown(dp):
+    """Корректно закрываем сессию, чтобы не оставалось висящих соединений."""
+    try:
+        await bot.close()
+        print("✅ Сессия бота закрыта")
+    except Exception as e:
+        print(f"⚠️ Ошибка при закрытии сессии: {e}")
+
+
 if __name__ == "__main__":
     from aiogram import executor
 
     print("🚀 Бот запускается...")
     print("⚠️ Убедитесь, что запущен только ОДИН экземпляр бота!")
 
-    async def on_startup(dp):
+    # На случай, если первый polling упадёт из-за конфликта — ретраим
+    max_attempts = 3
+    for attempt in range(1, max_attempts + 1):
         try:
-            await bot.delete_webhook(drop_pending_updates=True)
-            print("✅ Вебхук удален")
+            executor.start_polling(
+                dp,
+                skip_updates=True,
+                on_startup=on_startup,
+                on_shutdown=on_shutdown,
+            )
+            break
+        except TerminatedByOtherGetUpdates:
+            print(f"⚠️ Конфликт getUpdates (попытка {attempt}/{max_attempts}). "
+                  f"Ждём 5 секунд и пробуем снова...")
+            import time
+            time.sleep(5)
         except Exception as e:
-            print(f"⚠️ Ошибка удаления вебхука: {e}")
-
-    try:
-        executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
-    except Exception as e:
-        print(f"❌ Ошибка при запуске: {e}")
+            print(f"❌ Ошибка при запуске: {e}")
+            break
