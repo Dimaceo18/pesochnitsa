@@ -14,7 +14,6 @@ import io
 
 # ========== КОНФИГ ==========
 API_TOKEN = os.getenv("BOT_TOKEN")
-
 if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
@@ -63,7 +62,7 @@ I_TITLE_FONT_MIN = 20
 I_TITLE_PLATE_PAD_X = 18
 I_TITLE_PLATE_PAD_Y = 10
 I_TITLE_PLATE_RADIUS = 16
-I_TITLE_LINE_GAP = 8
+I_TITLE_LINE_GAP = 0        # <-- плашки вплотную
 
 I_TEXT_TOP_GAP = 24
 I_TEXT_FONT_MAX = 30
@@ -355,31 +354,49 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
     return output_path
 
 # ========== ГЕНЕРАЦИЯ: ИНСТА-ШАБЛОН ==========
-def draw_rounded_rect(draw, box, radius, fill):
+def draw_rounded_rect_smart(draw, box, radius, fill, top_round=True, bottom_round=True):
+    """Рисует прямоугольник, у которого скруглены только верхние/нижние углы.
+    Это нужно, чтобы соседние плашки сливались в единый блок без чёрных перемычек."""
     x1, y1, x2, y2 = box
     r = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
     if r <= 0:
         draw.rectangle(box, fill=fill)
         return
-    draw.rectangle([x1 + r, y1, x2 - r, y2], fill=fill)
-    draw.rectangle([x1, y1 + r, x2, y2 - r], fill=fill)
-    draw.pieslice([x1, y1, x1 + 2*r, y1 + 2*r], 180, 270, fill=fill)
-    draw.pieslice([x2 - 2*r, y1, x2, y1 + 2*r], 270, 360, fill=fill)
-    draw.pieslice([x1, y2 - 2*r, x1 + 2*r, y2], 90, 180, fill=fill)
-    draw.pieslice([x2 - 2*r, y2 - 2*r, x2, y2], 0, 90, fill=fill)
 
-def wrap_title_lines(draw, text, font, max_width):
+    # Центральная часть (всегда прямоугольник)
+    draw.rectangle([x1 + r, y1, x2 - r, y2], fill=fill)
+    # Левый и правый прямоугольники (между скруглениями)
+    draw.rectangle([x1, y1 + (r if top_round else 0), x2, y2 - (r if bottom_round else 0)], fill=fill)
+
+    # Верхние скругления
+    if top_round:
+        draw.pieslice([x1, y1, x1 + 2*r, y1 + 2*r], 180, 270, fill=fill)
+        draw.pieslice([x2 - 2*r, y1, x2, y1 + 2*r], 270, 360, fill=fill)
+    else:
+        draw.rectangle([x1, y1, x2, y1 + r], fill=fill)
+
+    # Нижние скругления
+    if bottom_round:
+        draw.pieslice([x1, y2 - 2*r, x1 + 2*r, y2], 90, 180, fill=fill)
+        draw.pieslice([x2 - 2*r, y2 - 2*r, x2, y2], 0, 90, fill=fill)
+    else:
+        draw.rectangle([x1, y2 - r, x2, y2], fill=fill)
+
+def wrap_title_lines_max_words(draw, text, font, max_width, max_words_per_line=3):
+    """Разбивает текст на строки, стараясь не превышать max_words_per_line слов и max_width."""
     words = text.upper().split()
     lines, cur = [], []
     for word in words:
         test = ' '.join(cur + [word])
         bb = draw.textbbox((0, 0), test, font=font)
-        if bb[2] - bb[0] <= max_width:
-            cur.append(word)
-        else:
-            if cur: lines.append(' '.join(cur))
+        if (bb[2] - bb[0] > max_width) or (len(cur) >= max_words_per_line):
+            if cur:
+                lines.append(' '.join(cur))
             cur = [word]
-    if cur: lines.append(' '.join(cur))
+        else:
+            cur.append(word)
+    if cur:
+        lines.append(' '.join(cur))
     return lines
 
 async def generate_story_insta(photo_path: str, title: str, content: str,
@@ -411,25 +428,21 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
 
     for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
         tf = load_font(size, 'bold')
-        lines = wrap_title_lines(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
-        
+        lines = wrap_title_lines_max_words(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X, max_words_per_line=3)
+
         lb = draw.textbbox((0, 0), "A", font=tf)
         lh = lb[3] - lb[1]
         plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
         total_h = len(lines) * plate_h + (len(lines) - 1) * I_TITLE_LINE_GAP
-        
-        if 2 <= len(lines) <= 4 and total_h <= 260:
-            title_font_size = size
-            title_lines = lines
-            break
-        elif len(lines) == 1 and size <= 42:
+
+        if len(lines) <= 4 and total_h <= 300:
             title_font_size = size
             title_lines = lines
             break
 
     if not title_lines:
         tf = load_font(I_TITLE_FONT_MIN, 'bold')
-        title_lines = wrap_title_lines(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
+        title_lines = wrap_title_lines_max_words(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X, max_words_per_line=3)
         title_font_size = I_TITLE_FONT_MIN
 
     title_font = load_font(title_font_size, 'bold')
@@ -437,8 +450,11 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     lh = lb[3] - lb[1]
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
 
+    # Рисуем строки: первая со скруглением сверху, последняя — снизу,
+    # средние — прямые (чтобы слиться в единый блок)
+    total_lines = len(title_lines)
     cur_y = I_TITLE_TOP
-    for line in title_lines:
+    for idx, line in enumerate(title_lines):
         wb = draw.textbbox((0, 0), line, font=title_font)
         line_w = wb[2] - wb[0]
         plate_w = line_w + 2 * I_TITLE_PLATE_PAD_X
@@ -446,13 +462,20 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         y1 = cur_y
         x2 = x1 + plate_w
         y2 = y1 + plate_h
-        
-        draw_rounded_rect(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, I_TITLE_PLATE_COLOR)
-        
-        tx = x1 + (plate_w - line_w) // 2
-        ty = y1 + I_TITLE_PLATE_PAD_Y - 2
-        draw.text((tx, ty), line, font=title_font, fill=I_TITLE_TEXT_COLOR)
-        
+
+        top_round = (idx == 0)
+        bottom_round = (idx == total_lines - 1)
+
+        draw_rounded_rect_smart(
+            draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, I_TITLE_PLATE_COLOR,
+            top_round=top_round, bottom_round=bottom_round
+        )
+
+        # Точное центрирование текста на плашке
+        center_x = x1 + plate_w / 2
+        center_y = y1 + plate_h / 2
+        draw.text((center_x, center_y), line, font=title_font, fill=I_TITLE_TEXT_COLOR, anchor="mm")
+
         cur_y = y2 + I_TITLE_LINE_GAP
 
     text_y = cur_y + I_TEXT_TOP_GAP
@@ -628,7 +651,7 @@ async def handle_photo_or_document(message: types.Message):
             "title": title,
             "content": content,
             "highlight_words": [],
-            "step": "waiting_template"  # СРАЗУ ШАГ ВЫБОРА ШАБЛОНА
+            "step": "waiting_template"
         }
 
         await bot.send_message(
@@ -655,7 +678,7 @@ async def handle_photo_or_document(message: types.Message):
             "title": title,
             "content": content,
             "highlight_words": [],
-            "step": "waiting_template"  # СРАЗУ ШАГ ВЫБОРА ШАБЛОНА
+            "step": "waiting_template"
         }
 
         await bot.send_message(
@@ -739,7 +762,6 @@ async def process_template_callback(callback_query: types.CallbackQuery):
     await safe_remove_keyboard(callback_query.message)
 
     if template == "classic":
-        # Если классик — сначала спрашиваем выделение слов
         user_data[user_id]["step"] = "waiting_highlight_words"
         title = user_data[user_id]["title"]
         await bot.send_message(
@@ -750,7 +772,6 @@ async def process_template_callback(callback_query: types.CallbackQuery):
             f"Если не нужно — отправь 'нет' или '-'"
         )
     else:
-        # Если инста — выделение слов не нужно, сразу переходим к рубрике
         user_data[user_id]["step"] = "waiting_rubric"
         await bot.send_message(
             user_id,
