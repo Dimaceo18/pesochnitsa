@@ -362,28 +362,24 @@ def draw_rounded_rect(draw, box, radius, fill):
     draw.pieslice([x1, y2 - 2*r, x1 + 2*r, y2], 90, 180, fill=fill)
     draw.pieslice([x2 - 2*r, y2 - 2*r, x2, y2], 0, 90, fill=fill)
 
-def wrap_title_lines_max_words(draw, text, font, max_width, max_words_per_line=3):
+# Обёртка для переноса по ширине (как в рабочей версии)
+def wrap_title_by_width(draw, text, font, max_width):
     words = text.upper().split()
     lines, cur = [], []
     for word in words:
         test = ' '.join(cur + [word])
         bb = draw.textbbox((0, 0), test, font=font)
-        if (bb[2] - bb[0] > max_width) or (len(cur) >= max_words_per_line):
+        if bb[2] - bb[0] <= max_width:
+            cur.append(word)
+        else:
             if cur:
                 lines.append(' '.join(cur))
             cur = [word]
-        else:
-            cur.append(word)
     if cur:
         lines.append(' '.join(cur))
     return lines
 
 async def generate_story_insta(photo_path: str, title: str, content: str, theme: str = "dark") -> str:
-    """
-    Инста-шаблон.
-    theme="dark" -> чёрный фон, белый текст, белые плашки заголовка.
-    theme="light" -> белый фон, чёрный текст, чёрные плашки заголовка.
-    """
     logging.info(f"🖼 [insta] генерация (тема: {theme})")
 
     if theme == "dark":
@@ -423,15 +419,17 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
 
     max_width = IW - 2 * I_MARGIN_X
 
+    # Определяем лимит строк: если мало слов (<=9) — 3 строки, иначе 4
     title_words_count = len(title.upper().split())
     max_lines_allowed = 3 if title_words_count <= 9 else 4
 
     title_font_size = I_TITLE_FONT_MAX
     title_lines = []
 
+    # Подбор шрифта по ширине, без ограничения по количеству слов в строке
     for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
         tf = load_font(size, 'bold')
-        lines = wrap_title_lines_max_words(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X, max_words_per_line=3)
+        lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
 
         lb = draw.textbbox((0, 0), "A", font=tf)
         lh = lb[3] - lb[1]
@@ -445,7 +443,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
 
     if not title_lines:
         tf = load_font(I_TITLE_FONT_MIN, 'bold')
-        title_lines = wrap_title_lines_max_words(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X, max_words_per_line=3)
+        title_lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
         title_font_size = I_TITLE_FONT_MIN
 
     title_font = load_font(title_font_size, 'bold')
@@ -525,7 +523,6 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
                          highlight_words: list, theme: str = "light",
                          template: str = "classic") -> str:
     if template == "insta":
-        # Для инсты theme="dark" (чёрный фон) или "light" (белый фон)
         return await generate_story_insta(photo_path, title, content, theme)
     return await generate_story_classic(photo_path, title, content, rubric, highlight_words, theme)
 
@@ -748,16 +745,25 @@ async def process_template_callback(callback_query: types.CallbackQuery):
     template = "insta" if callback_query.data == "template_insta" else "classic"
     await callback_query.answer()
 
-    if user_id not in user_data or user_data[user_id].get("step") != "waiting_template":
+    if user_id not in user_data:
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
+
+    # Мягкая проверка: если шаг не waiting_template, но данные есть — продолжаем
+    if user_data[user_id].get("step") not in ["waiting_template", "waiting_title", "waiting_content"]:
+        # Если это классик, а шаг не тот, возможно, юзер нажал кнопку дважды
+        if template == "classic" and user_data[user_id].get("step") == "waiting_highlight_words":
+            pass # Продолжаем
+        else:
+            await bot.send_message(user_id, "❌ Начните заново: /start")
+            return
 
     user_data[user_id]["template"] = template
     await safe_remove_keyboard(callback_query.message)
 
     if template == "classic":
         user_data[user_id]["step"] = "waiting_highlight_words"
-        title = user_data[user_id]["title"]
+        title = user_data[user_id].get("title", "")
         await bot.send_message(
             user_id,
             f"🎨 Шаблон: Классик\n\n"
@@ -768,10 +774,14 @@ async def process_template_callback(callback_query: types.CallbackQuery):
     else:
         # Для Инсты сразу генерируем два варианта
         user_data[user_id]["step"] = "waiting_generation"
-        photo_path = user_data[user_id]["photo"]
-        title = user_data[user_id]["title"]
-        content = user_data[user_id]["content"]
+        photo_path = user_data[user_id].get("photo")
+        title = user_data[user_id].get("title")
+        content = user_data[user_id].get("content")
         
+        if not photo_path or not title:
+            await bot.send_message(user_id, "❌ Не хватает данных. Начните заново: /start")
+            return
+            
         await bot.send_message(
             user_id,
             "⏳ Генерирую два варианта в шаблоне «Инста-дизайн»...\n"
@@ -806,7 +816,12 @@ async def process_theme_callback(callback_query: types.CallbackQuery):
     theme = "dark" if callback_query.data == "theme_dark" else "light"
     await callback_query.answer()
 
-    if user_id not in user_data or user_data[user_id].get("step") != "waiting_theme":
+    if user_id not in user_data:
+        await bot.send_message(user_id, "❌ Начните заново: /start")
+        return
+
+    # Мягкая проверка
+    if user_data[user_id].get("step") not in ["waiting_theme", "waiting_highlight_words"]:
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
 
@@ -832,7 +847,8 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
 
-    if user_data[user_id].get("step") != "waiting_rubric":
+    # Мягкая проверка
+    if user_data[user_id].get("step") not in ["waiting_rubric", "waiting_theme"]:
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
 
@@ -840,12 +856,16 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
     user_data[user_id]["step"] = "done"
     await safe_remove_keyboard(callback_query.message)
 
-    photo_path = user_data[user_id]["photo"]
-    title = user_data[user_id]["title"]
-    content = user_data[user_id]["content"]
+    photo_path = user_data[user_id].get("photo")
+    title = user_data[user_id].get("title")
+    content = user_data[user_id].get("content")
     highlight_words = user_data[user_id].get("highlight_words", [])
     theme = user_data[user_id].get("theme", "light")
     template = user_data[user_id].get("template", "classic")
+
+    if not photo_path or not title:
+        await bot.send_message(user_id, "❌ Не хватает данных. Начните заново: /start")
+        return
 
     label = "📸 Инста-дизайн" if template == "insta" else f"🎨 Классик / {'тёмная' if theme == 'dark' else 'светлая'}"
     await bot.send_message(
