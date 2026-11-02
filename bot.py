@@ -350,41 +350,47 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
 
 # ========== ГЕНЕРАЦИЯ: ИНСТА-ШАБЛОН ==========
 def draw_rounded_rect_highres(draw, box, radius, fill):
-    """
-    Рисует скругленный прямоугольник с суперсэмплингом (x4) для сглаживания.
-    Это избавляет от "рваных" пикселей на закруглениях.
-    """
     x1, y1, x2, y2 = box
     r = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
     if r <= 0:
         draw.rectangle(box, fill=fill)
         return
 
-    # Масштаб для сглаживания
     scale = 4
     width = (x2 - x1) * scale
     height = (y2 - y1) * scale
     if width <= 0 or height <= 0:
         return
 
-    # Создаем временное изображение с высоким разрешением
     temp = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     temp_draw = ImageDraw.Draw(temp)
-
-    # Рисуем прямоугольник с закруглениями
     temp_draw.rounded_rectangle(
         [0, 0, width - 1, height - 1],
         radius=r * scale,
         fill=fill
     )
-
-    # Уменьшаем и вставляем обратно
     temp = temp.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
     draw._image.paste(temp, (x1, y1), temp)
 
-# Обертка для переноса по ширине
 def wrap_title_by_width(draw, text, font, max_width):
     words = text.upper().split()
+    lines, cur = [], []
+    for word in words:
+        test = ' '.join(cur + [word])
+        bb = draw.textbbox((0, 0), test, font=font)
+        if bb[2] - bb[0] <= max_width:
+            cur.append(word)
+        else:
+            if cur:
+                lines.append(' '.join(cur))
+            cur = [word]
+    if cur:
+        lines.append(' '.join(cur))
+    return lines
+
+# Строгий перенос текста по РЕАЛЬНОЙ ширине через textbbox
+def wrap_text_strict(draw, text, font, max_width):
+    words = text.split()
     lines, cur = [], []
     for word in words:
         test = ' '.join(cur + [word])
@@ -437,7 +443,6 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         draw.text((IW // 2 - 50, I_PHOTO_HEIGHT // 2 - 10),
                  "📷 ФОТО", font=load_font(28, 'bold'), fill=placeholder_text)
 
-    # Ширина, доступная для заголовка
     max_width = IW - 2 * I_MARGIN_X
 
     title_words_count = len(title.upper().split())
@@ -471,23 +476,21 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
 
     cur_y = I_TITLE_TOP
-    max_plate_w = 0 # Запоминаем самую широкую плашку
+    max_plate_w = 0
 
     for line in title_lines:
         wb = draw.textbbox((0, 0), line, font=title_font)
         line_w = wb[2] - wb[0]
         plate_w = line_w + 2 * I_TITLE_PLATE_PAD_X
-        max_plate_w = max(max_plate_w, plate_w) # Обновляем
+        max_plate_w = max(max_plate_w, plate_w)
 
         x1 = I_MARGIN_X
         y1 = cur_y
         x2 = x1 + plate_w
         y2 = y1 + plate_h
         
-        # Используем сглаженную отрисовку
         draw_rounded_rect_highres(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, plate_color)
         
-        # Центрируем текст
         center_x = x1 + plate_w / 2
         center_y = y1 + plate_h / 2
         draw.text((center_x, center_y), line, font=title_font, fill=title_text_color, anchor="mm")
@@ -496,13 +499,14 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
 
     # ==========================================
     # ОСНОВНОЙ ТЕКСТ
-    # Привязываем ширину текста к ширине самой широкой плашки
+    # Строго привязываем ширину текста к ширине самой широкой плашки.
+    # Запас 2px по краям для уверенности.
     # ==========================================
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
     
-    # Ширина для текста = ширина самой широкой плашки
-    text_max_width = max_plate_w
+    # Максимальная ширина для ОДНОЙ СТРОКИ текста = ширина самой плашки минус 4px запаса
+    text_line_max_width = max_plate_w - 4
 
     if content and content != "Текст отсутствует":
         paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
@@ -512,43 +516,42 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     text_font_size = I_TEXT_FONT_MAX
     wrapped_paragraphs = []
     
-    # Подбор шрифта
+    # Подбор размера шрифта и одновременный строгий перенос
     for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
         tf = load_font(size, 'regular')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
+        
         total_h = 0
-        tmp = []
+        tmp_paragraphs = []
+        
         for para in paragraphs:
-            # Ограничиваем ширину текста шириной плашки
-            cpl = int(text_max_width / (size * 0.62))
-            w = textwrap.wrap(para.upper(), width=cpl) or [para.upper()]
-            tmp.append(w)
-            total_h += len(w) * (sh + I_TEXT_LINE_GAP) + I_TEXT_PARA_GAP
+            # Используем строгий перенос по реальной ширине
+            lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
+            tmp_paragraphs.append(lines)
+            total_h += len(lines) * (sh + I_TEXT_LINE_GAP) + I_TEXT_PARA_GAP
+            
         if total_h <= available_h:
             text_font_size = size
-            wrapped_paragraphs = tmp
+            wrapped_paragraphs = tmp_paragraphs
             break
             
     if not wrapped_paragraphs:
+        # Если даже минимальный шрифт не влезает, принудительно ставим минимальный и рвем
         tf = load_font(I_TEXT_FONT_MIN, 'regular')
-        sb = draw.textbbox((0, 0), "A", font=tf)
-        sh = sb[3] - sb[1]
         for para in paragraphs:
-            cpl = int(text_max_width / (I_TEXT_FONT_MIN * 0.62))
-            w = textwrap.wrap(para.upper(), width=cpl) or [para.upper()]
-            wrapped_paragraphs.append(w)
+            lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
+            wrapped_paragraphs.append(lines)
         text_font_size = I_TEXT_FONT_MIN
 
     text_font = load_font(text_font_size, 'regular')
     sb = draw.textbbox((0, 0), "A", font=text_font)
     sh = sb[3] - sb[1]
     
-    # Выравниваем текст по левому краю (так же, как плашка)
     pos_y = text_y
     for para_lines in wrapped_paragraphs:
         for line in para_lines:
-            # X координата = I_MARGIN_X (как у плашки)
+            # Рисуем ровно по левому краю отступа
             draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=text_color)
             pos_y += sh + I_TEXT_LINE_GAP
         pos_y += I_TEXT_PARA_GAP
