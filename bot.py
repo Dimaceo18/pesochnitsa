@@ -349,20 +349,40 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
     return output_path
 
 # ========== ГЕНЕРАЦИЯ: ИНСТА-ШАБЛОН ==========
-def draw_rounded_rect(draw, box, radius, fill):
+def draw_rounded_rect_highres(draw, box, radius, fill):
+    """
+    Рисует скругленный прямоугольник с суперсэмплингом (x4) для сглаживания.
+    Это избавляет от "рваных" пикселей на закруглениях.
+    """
     x1, y1, x2, y2 = box
     r = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
     if r <= 0:
         draw.rectangle(box, fill=fill)
         return
-    draw.rectangle([x1 + r, y1, x2 - r, y2], fill=fill)
-    draw.rectangle([x1, y1 + r, x2, y2 - r], fill=fill)
-    draw.pieslice([x1, y1, x1 + 2*r, y1 + 2*r], 180, 270, fill=fill)
-    draw.pieslice([x2 - 2*r, y1, x2, y1 + 2*r], 270, 360, fill=fill)
-    draw.pieslice([x1, y2 - 2*r, x1 + 2*r, y2], 90, 180, fill=fill)
-    draw.pieslice([x2 - 2*r, y2 - 2*r, x2, y2], 0, 90, fill=fill)
 
-# Обёртка для переноса по ширине (как в рабочей версии)
+    # Масштаб для сглаживания
+    scale = 4
+    width = (x2 - x1) * scale
+    height = (y2 - y1) * scale
+    if width <= 0 or height <= 0:
+        return
+
+    # Создаем временное изображение с высоким разрешением
+    temp = Image.new('RGBA', (width, height), (0, 0, 0, 0))
+    temp_draw = ImageDraw.Draw(temp)
+
+    # Рисуем прямоугольник с закруглениями
+    temp_draw.rounded_rectangle(
+        [0, 0, width - 1, height - 1],
+        radius=r * scale,
+        fill=fill
+    )
+
+    # Уменьшаем и вставляем обратно
+    temp = temp.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
+    draw._image.paste(temp, (x1, y1), temp)
+
+# Обертка для переноса по ширине
 def wrap_title_by_width(draw, text, font, max_width):
     words = text.upper().split()
     lines, cur = [], []
@@ -417,16 +437,15 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         draw.text((IW // 2 - 50, I_PHOTO_HEIGHT // 2 - 10),
                  "📷 ФОТО", font=load_font(28, 'bold'), fill=placeholder_text)
 
+    # Ширина, доступная для заголовка
     max_width = IW - 2 * I_MARGIN_X
 
-    # Определяем лимит строк: если мало слов (<=9) — 3 строки, иначе 4
     title_words_count = len(title.upper().split())
     max_lines_allowed = 3 if title_words_count <= 9 else 4
 
     title_font_size = I_TITLE_FONT_MAX
     title_lines = []
 
-    # Подбор шрифта по ширине, без ограничения по количеству слов в строке
     for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
         tf = load_font(size, 'bold')
         lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
@@ -452,25 +471,38 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
 
     cur_y = I_TITLE_TOP
+    max_plate_w = 0 # Запоминаем самую широкую плашку
+
     for line in title_lines:
         wb = draw.textbbox((0, 0), line, font=title_font)
         line_w = wb[2] - wb[0]
         plate_w = line_w + 2 * I_TITLE_PLATE_PAD_X
+        max_plate_w = max(max_plate_w, plate_w) # Обновляем
+
         x1 = I_MARGIN_X
         y1 = cur_y
         x2 = x1 + plate_w
         y2 = y1 + plate_h
         
-        draw_rounded_rect(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, plate_color)
+        # Используем сглаженную отрисовку
+        draw_rounded_rect_highres(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, plate_color)
         
+        # Центрируем текст
         center_x = x1 + plate_w / 2
         center_y = y1 + plate_h / 2
         draw.text((center_x, center_y), line, font=title_font, fill=title_text_color, anchor="mm")
         
         cur_y = y2 + I_TITLE_LINE_GAP
 
+    # ==========================================
+    # ОСНОВНОЙ ТЕКСТ
+    # Привязываем ширину текста к ширине самой широкой плашки
+    # ==========================================
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
+    
+    # Ширина для текста = ширина самой широкой плашки
+    text_max_width = max_plate_w
 
     if content and content != "Текст отсутствует":
         paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
@@ -479,6 +511,8 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
 
     text_font_size = I_TEXT_FONT_MAX
     wrapped_paragraphs = []
+    
+    # Подбор шрифта
     for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
         tf = load_font(size, 'regular')
         sb = draw.textbbox((0, 0), "A", font=tf)
@@ -486,7 +520,8 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         total_h = 0
         tmp = []
         for para in paragraphs:
-            cpl = int(max_width / (size * 0.62))
+            # Ограничиваем ширину текста шириной плашки
+            cpl = int(text_max_width / (size * 0.62))
             w = textwrap.wrap(para.upper(), width=cpl) or [para.upper()]
             tmp.append(w)
             total_h += len(w) * (sh + I_TEXT_LINE_GAP) + I_TEXT_PARA_GAP
@@ -494,12 +529,13 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
             text_font_size = size
             wrapped_paragraphs = tmp
             break
+            
     if not wrapped_paragraphs:
         tf = load_font(I_TEXT_FONT_MIN, 'regular')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
         for para in paragraphs:
-            cpl = int(max_width / (I_TEXT_FONT_MIN * 0.62))
+            cpl = int(text_max_width / (I_TEXT_FONT_MIN * 0.62))
             w = textwrap.wrap(para.upper(), width=cpl) or [para.upper()]
             wrapped_paragraphs.append(w)
         text_font_size = I_TEXT_FONT_MIN
@@ -507,9 +543,12 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     text_font = load_font(text_font_size, 'regular')
     sb = draw.textbbox((0, 0), "A", font=text_font)
     sh = sb[3] - sb[1]
+    
+    # Выравниваем текст по левому краю (так же, как плашка)
     pos_y = text_y
     for para_lines in wrapped_paragraphs:
         for line in para_lines:
+            # X координата = I_MARGIN_X (как у плашки)
             draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=text_color)
             pos_y += sh + I_TEXT_LINE_GAP
         pos_y += I_TEXT_PARA_GAP
@@ -749,11 +788,9 @@ async def process_template_callback(callback_query: types.CallbackQuery):
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
 
-    # Мягкая проверка: если шаг не waiting_template, но данные есть — продолжаем
     if user_data[user_id].get("step") not in ["waiting_template", "waiting_title", "waiting_content"]:
-        # Если это классик, а шаг не тот, возможно, юзер нажал кнопку дважды
         if template == "classic" and user_data[user_id].get("step") == "waiting_highlight_words":
-            pass # Продолжаем
+            pass
         else:
             await bot.send_message(user_id, "❌ Начните заново: /start")
             return
@@ -772,7 +809,6 @@ async def process_template_callback(callback_query: types.CallbackQuery):
             f"Если не нужно — отправь 'нет' или '-'"
         )
     else:
-        # Для Инсты сразу генерируем два варианта
         user_data[user_id]["step"] = "waiting_generation"
         photo_path = user_data[user_id].get("photo")
         title = user_data[user_id].get("title")
@@ -789,17 +825,14 @@ async def process_template_callback(callback_query: types.CallbackQuery):
             "2. Бело-чёрный (белый фон)"
         )
         
-        # Вариант 1: Чёрно-белый (чёрный фон, белый текст)
         dark_output = await generate_story_insta(photo_path, title, content, theme="dark")
         with open(dark_output, 'rb') as photo_file:
             await bot.send_photo(chat_id=user_id, photo=photo_file, caption="1. Чёрно-белый (чёрный фон)")
         
-        # Вариант 2: Бело-чёрный (белый фон, чёрный текст)
         light_output = await generate_story_insta(photo_path, title, content, theme="light")
         with open(light_output, 'rb') as photo_file:
             await bot.send_photo(chat_id=user_id, photo=photo_file, caption="2. Бело-чёрный (белый фон)")
         
-        # Удаляем временные файлы
         for file_path in [photo_path, dark_output, light_output]:
             try:
                 if os.path.exists(file_path):
@@ -820,7 +853,6 @@ async def process_theme_callback(callback_query: types.CallbackQuery):
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
 
-    # Мягкая проверка
     if user_data[user_id].get("step") not in ["waiting_theme", "waiting_highlight_words"]:
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
@@ -847,7 +879,6 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
 
-    # Мягкая проверка
     if user_data[user_id].get("step") not in ["waiting_rubric", "waiting_theme"]:
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
