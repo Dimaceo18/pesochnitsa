@@ -62,7 +62,8 @@ I_TITLE_FONT_MIN = 20
 I_TITLE_PLATE_PAD_X = 18
 I_TITLE_PLATE_PAD_Y = 10
 I_TITLE_PLATE_RADIUS = 16
-I_TITLE_LINE_GAP = 0        # <-- плашки вплотную
+# Плашки перекрываются на 1px, чтобы не было видно чёрных швов между скруглениями
+I_TITLE_LINE_GAP = -1
 
 I_TEXT_TOP_GAP = 24
 I_TEXT_FONT_MAX = 30
@@ -354,36 +355,20 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
     return output_path
 
 # ========== ГЕНЕРАЦИЯ: ИНСТА-ШАБЛОН ==========
-def draw_rounded_rect_smart(draw, box, radius, fill, top_round=True, bottom_round=True):
-    """Рисует прямоугольник, у которого скруглены только верхние/нижние углы.
-    Это нужно, чтобы соседние плашки сливались в единый блок без чёрных перемычек."""
+def draw_rounded_rect(draw, box, radius, fill):
     x1, y1, x2, y2 = box
     r = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
     if r <= 0:
         draw.rectangle(box, fill=fill)
         return
-
-    # Центральная часть (всегда прямоугольник)
     draw.rectangle([x1 + r, y1, x2 - r, y2], fill=fill)
-    # Левый и правый прямоугольники (между скруглениями)
-    draw.rectangle([x1, y1 + (r if top_round else 0), x2, y2 - (r if bottom_round else 0)], fill=fill)
-
-    # Верхние скругления
-    if top_round:
-        draw.pieslice([x1, y1, x1 + 2*r, y1 + 2*r], 180, 270, fill=fill)
-        draw.pieslice([x2 - 2*r, y1, x2, y1 + 2*r], 270, 360, fill=fill)
-    else:
-        draw.rectangle([x1, y1, x2, y1 + r], fill=fill)
-
-    # Нижние скругления
-    if bottom_round:
-        draw.pieslice([x1, y2 - 2*r, x1 + 2*r, y2], 90, 180, fill=fill)
-        draw.pieslice([x2 - 2*r, y2 - 2*r, x2, y2], 0, 90, fill=fill)
-    else:
-        draw.rectangle([x1, y2 - r, x2, y2], fill=fill)
+    draw.rectangle([x1, y1 + r, x2, y2 - r], fill=fill)
+    draw.pieslice([x1, y1, x1 + 2*r, y1 + 2*r], 180, 270, fill=fill)
+    draw.pieslice([x2 - 2*r, y1, x2, y1 + 2*r], 270, 360, fill=fill)
+    draw.pieslice([x1, y2 - 2*r, x1 + 2*r, y2], 90, 180, fill=fill)
+    draw.pieslice([x2 - 2*r, y2 - 2*r, x2, y2], 0, 90, fill=fill)
 
 def wrap_title_lines_max_words(draw, text, font, max_width, max_words_per_line=3):
-    """Разбивает текст на строки, стараясь не превышать max_words_per_line слов и max_width."""
     words = text.upper().split()
     lines, cur = [], []
     for word in words:
@@ -423,6 +408,11 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
 
     max_width = IW - 2 * I_MARGIN_X
 
+    # ЛОГИКА: определяем, сколько слов в заголовке.
+    # Если мало (<= 9 слов), стараемся в 3 строки. Если много — до 4 строк.
+    title_words_count = len(title.upper().split())
+    max_lines_allowed = 3 if title_words_count <= 9 else 4
+
     title_font_size = I_TITLE_FONT_MAX
     title_lines = []
 
@@ -435,7 +425,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
         total_h = len(lines) * plate_h + (len(lines) - 1) * I_TITLE_LINE_GAP
 
-        if len(lines) <= 4 and total_h <= 300:
+        if len(lines) <= max_lines_allowed and total_h <= 300:
             title_font_size = size
             title_lines = lines
             break
@@ -450,11 +440,8 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
     lh = lb[3] - lb[1]
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
 
-    # Рисуем строки: первая со скруглением сверху, последняя — снизу,
-    # средние — прямые (чтобы слиться в единый блок)
-    total_lines = len(title_lines)
     cur_y = I_TITLE_TOP
-    for idx, line in enumerate(title_lines):
+    for line in title_lines:
         wb = draw.textbbox((0, 0), line, font=title_font)
         line_w = wb[2] - wb[0]
         plate_w = line_w + 2 * I_TITLE_PLATE_PAD_X
@@ -462,20 +449,16 @@ async def generate_story_insta(photo_path: str, title: str, content: str,
         y1 = cur_y
         x2 = x1 + plate_w
         y2 = y1 + plate_h
-
-        top_round = (idx == 0)
-        bottom_round = (idx == total_lines - 1)
-
-        draw_rounded_rect_smart(
-            draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, I_TITLE_PLATE_COLOR,
-            top_round=top_round, bottom_round=bottom_round
-        )
-
-        # Точное центрирование текста на плашке
+        
+        # Рисуем полноценную скругленную плашку. 
+        # Из-за I_TITLE_LINE_GAP = -1 они перекрываются и не имеют видимых швов.
+        draw_rounded_rect(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, I_TITLE_PLATE_COLOR)
+        
+        # Центрируем текст на плашке
         center_x = x1 + plate_w / 2
         center_y = y1 + plate_h / 2
         draw.text((center_x, center_y), line, font=title_font, fill=I_TITLE_TEXT_COLOR, anchor="mm")
-
+        
         cur_y = y2 + I_TITLE_LINE_GAP
 
     text_y = cur_y + I_TEXT_TOP_GAP
