@@ -18,7 +18,7 @@ if not API_TOKEN:
 # Шрифты
 FONT_PATHS = [
     "Inter-Bold.ttf",
-    "Inter-Regular.ttf", 
+    "Inter-Regular.ttf",
     "Inter-Medium.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
@@ -48,7 +48,7 @@ TITLE_MAX_WIDTH = W - 100
 TITLE_LINE_SPACING = 10  # Межстрочный интервал для заголовка
 
 # ФИОЛЕТОВАЯ ЛИНИЯ
-LINE_TOP_OFFSET = 20
+LINE_TOP_OFFSET = 27   # было 20 — сдвинули линию на 7px ниже
 LINE_HEIGHT = 8
 
 # ТЕКСТ НОВОСТИ
@@ -73,35 +73,35 @@ def load_font(size, weight='regular'):
         'medium': [FONT_PATHS[2], FONT_PATHS[0], FONT_PATHS[4]],
         'regular': FONT_PATHS[1:3] + FONT_PATHS[3:5]
     }
-    
+
     paths = font_names.get(weight, FONT_PATHS[1:3] + FONT_PATHS[3:5])
-    
+
     for path in paths:
         try:
             if os.path.exists(path):
                 return ImageFont.truetype(path, size)
         except:
             continue
-    
+
     return ImageFont.load_default()
 
 # ========== ПАРСИНГ ТЕКСТА ==========
 def parse_text(text: str) -> tuple:
     if not text:
         return "", ""
-    
+
     text = text.strip()
-    
+
     paragraphs = re.split(r'\n\s*\n', text)
     paragraphs = [p.strip() for p in paragraphs if p.strip()]
-    
+
     if len(paragraphs) > 1:
         title = paragraphs[0]
         content = "\n\n".join(paragraphs[1:])
     else:
         lines = text.split('\n')
         lines = [l.strip() for l in lines if l.strip()]
-        
+
         if len(lines) > 1:
             title = lines[0]
             content = '\n\n'.join(lines[1:])
@@ -120,13 +120,13 @@ def parse_text(text: str) -> tuple:
                 else:
                     title = text
                     content = ""
-    
+
     if len(title) > 150:
         last_dot = title.rfind('.', 0, 150)
         last_q = title.rfind('?', 0, 150)
         last_excl = title.rfind('!', 0, 150)
         cut_pos = max(last_dot, last_q, last_excl)
-        
+
         if cut_pos > 0:
             remaining = title[cut_pos+1:].strip()
             title = title[:cut_pos+1].strip()
@@ -134,7 +134,7 @@ def parse_text(text: str) -> tuple:
                 content = remaining + "\n\n" + content if content else remaining
         else:
             title = title[:147] + "..."
-    
+
     return title, content
 
 # ========== ОБРАБОТКА ФОТО ==========
@@ -142,18 +142,18 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
     """Применяет эффекты к фото: шум +5%, насыщенность +5%"""
     if image.mode != 'RGB':
         image = image.convert('RGB')
-    
+
     # 1. Увеличение насыщенности на 5%
     enhancer = ImageEnhance.Color(image)
     image = enhancer.enhance(1.05)
-    
+
     # 2. Добавление шума 5%
     pixel_data = list(image.getdata())
     width, height = image.size
-    
+
     noise_intensity = 12
     noisy_pixels = []
-    
+
     for pixel in pixel_data:
         r, g, b = pixel
         noise_r = random.randint(-noise_intensity, noise_intensity)
@@ -163,36 +163,47 @@ def apply_photo_effect(image: Image.Image) -> Image.Image:
         g = max(0, min(255, g + noise_g))
         b = max(0, min(255, b + noise_b))
         noisy_pixels.append((r, g, b))
-    
+
     noisy_image = Image.new('RGB', (width, height))
     noisy_image.putdata(noisy_pixels)
-    
+
     return noisy_image
 
 # ========== ГЕНЕРАЦИЯ СТОРИС ==========
-async def generate_story(photo_path: str, title: str, content: str, rubric: str, highlight_words: list) -> str:
-    logging.info(f"🖼 Генерация сторис:")
-    logging.info(f"   Рубрика: {rubric}")
+async def generate_story(photo_path: str, title: str, content: str, rubric: str,
+                         highlight_words: list, theme: str = "light") -> str:
+    logging.info(f"🖼 Генерация сторис (тема: {theme}):")
+    logging.info(f"   Рубрика: {rubric if rubric else 'БЕЗ РУБРИКИ'}")
     logging.info(f"   Заголовок: {title[:100] if title else 'ПУСТО'}...")
     logging.info(f"   Выделенные слова: {highlight_words}")
     logging.info(f"   Контент: {content[:100] if content else 'ПУСТО'}...")
-    
+
     # ============================================================
-    # ШАГ 1: БЕЛЫЙ ХОЛСТ
+    # ЦВЕТА ТЕМЫ
     # ============================================================
-    canvas = Image.new('RGB', (W, H), color='white')
+    is_dark = (theme == "dark")
+    bg_color = 'black' if is_dark else 'white'
+    text_color = 'white' if is_dark else 'black'
+    placeholder_bg = '#1a1a1a' if is_dark else '#f0f0f0'
+    placeholder_outline = '#333333' if is_dark else '#cccccc'
+    placeholder_text = '#666666' if is_dark else '#999999'
+
+    # ============================================================
+    # ШАГ 1: ХОЛСТ
+    # ============================================================
+    canvas = Image.new('RGB', (W, H), color=bg_color)
     draw = ImageDraw.Draw(canvas)
-    
+
     # ============================================================
     # ШАГ 2: ВСТАВЛЯЕМ ФОТО С ЭФФЕКТАМИ
     # ============================================================
     try:
         if os.path.exists(photo_path):
             photo = Image.open(photo_path).convert("RGB")
-            
+
             photo_ratio = photo.width / photo.height
             target_ratio = PHOTO_WIDTH / PHOTO_HEIGHT
-            
+
             if photo_ratio > target_ratio:
                 new_height = PHOTO_HEIGHT
                 new_width = int(new_height * photo_ratio)
@@ -205,9 +216,9 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
                 photo = photo.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 top = (new_height - PHOTO_HEIGHT) // 2
                 photo = photo.crop((0, top, new_width, top + PHOTO_HEIGHT))
-            
+
             photo = apply_photo_effect(photo)
-            
+
             bordered_photo = Image.new('RGB', (PHOTO_WIDTH + 4, PHOTO_HEIGHT + 4), color='#e0e0e0')
             bordered_photo.paste(photo, (2, 2))
             canvas.paste(bordered_photo, (PHOTO_LEFT, PHOTO_TOP))
@@ -215,54 +226,56 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
             raise FileNotFoundError(f"Фото не найдено: {photo_path}")
     except Exception as e:
         logging.error(f"❌ Ошибка при обработке фото: {e}")
-        draw.rectangle([PHOTO_LEFT, PHOTO_TOP, PHOTO_LEFT + PHOTO_WIDTH, PHOTO_TOP + PHOTO_HEIGHT], 
-                      fill='#f0f0f0', outline='#cccccc', width=2)
-        draw.text((W//2 - 60, PHOTO_TOP + PHOTO_HEIGHT//2 - 10), 
-                 "📷 ФОТО", font=load_font(36, 'bold'), fill='#999999')
-    
+        draw.rectangle([PHOTO_LEFT, PHOTO_TOP, PHOTO_LEFT + PHOTO_WIDTH, PHOTO_TOP + PHOTO_HEIGHT],
+                      fill=placeholder_bg, outline=placeholder_outline, width=2)
+        draw.text((W//2 - 60, PHOTO_TOP + PHOTO_HEIGHT//2 - 10),
+                 "📷 ФОТО", font=load_font(36, 'bold'), fill=placeholder_text)
+
     # ============================================================
-    # ШАГ 3: РУБРИКА
+    # ШАГ 3: РУБРИКА (только если выбрана)
     # ============================================================
-    rubric_font = load_font(34, 'bold')
-    rubric_bbox = draw.textbbox((0, 0), rubric, font=rubric_font)
-    rubric_w = rubric_bbox[2] - rubric_bbox[0]
-    rubric_h = rubric_bbox[3] - rubric_bbox[1]
-    
-    rub_x1 = RUBRIC_LEFT
-    rub_y1 = RUBRIC_TOP
-    rub_x2 = RUBRIC_LEFT + rubric_w + RUBRIC_PADDING_X * 2
-    rub_y2 = RUBRIC_TOP + rubric_h + RUBRIC_PADDING_Y * 2
-    
-    draw.rectangle(
-        [rub_x1, rub_y1, rub_x2, rub_y2],
-        fill='#6C3CE1',
-        outline='#6C3CE1',
-        width=2
-    )
-    
-    rub_text_x = rub_x1 + (rub_x2 - rub_x1 - rubric_w) // 2
-    rub_text_y = rub_y1 + (rub_y2 - rub_y1 - rubric_h) // 2 - 4
-    draw.text((rub_text_x, rub_text_y), rubric, font=rubric_font, fill='white')
-    
-    logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
-    
+    if rubric:
+        rubric_font = load_font(34, 'bold')
+        rubric_bbox = draw.textbbox((0, 0), rubric, font=rubric_font)
+        rubric_w = rubric_bbox[2] - rubric_bbox[0]
+        rubric_h = rubric_bbox[3] - rubric_bbox[1]
+
+        rub_x1 = RUBRIC_LEFT
+        rub_y1 = RUBRIC_TOP
+        rub_x2 = RUBRIC_LEFT + rubric_w + RUBRIC_PADDING_X * 2
+        rub_y2 = RUBRIC_TOP + rubric_h + RUBRIC_PADDING_Y * 2
+
+        draw.rectangle(
+            [rub_x1, rub_y1, rub_x2, rub_y2],
+            fill='#6C3CE1',
+            outline='#6C3CE1',
+            width=2
+        )
+
+        rub_text_x = rub_x1 + (rub_x2 - rub_x1 - rubric_w) // 2
+        rub_text_y = rub_y1 + (rub_y2 - rub_y1 - rubric_h) // 2 - 4
+        draw.text((rub_text_x, rub_text_y), rubric, font=rubric_font, fill='white')
+
+        logging.info(f"📌 Рубрика '{rubric}' нарисована на фото")
+    else:
+        logging.info("📌 Рубрика не выбрана — бейдж не рисуем")
+
     # ============================================================
     # ШАГ 4: ЗАГОЛОВОК (с межстрочным интервалом)
     # ============================================================
     title_y = TITLE_TOP
-    max_title_height = 280  # Увеличил чтобы вмещался с интервалом
-    
-    # Подбираем размер шрифта
+    max_title_height = 280
+
     title_font_size = 56
     title_lines = []
-    
+
     for size in range(72, 32, -2):
         test_font = load_font(size, 'bold')
-        
+
         words = title.upper().split()
         lines = []
         current_line = []
-        
+
         for word in words:
             test_line = ' '.join(current_line + [word])
             bbox = draw.textbbox((0, 0), test_line, font=test_font)
@@ -274,13 +287,12 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
                 current_line = [word]
         if current_line:
             lines.append(' '.join(current_line))
-        
+
         if lines:
-            # Проверяем высоту с учетом межстрочного интервала
             line_bbox = draw.textbbox((0, 0), "A", font=test_font)
             line_height = line_bbox[3] - line_bbox[1]
             total_height = len(lines) * line_height + (len(lines) - 1) * TITLE_LINE_SPACING
-            
+
             if total_height <= max_title_height and len(lines) <= 3:
                 title_font_size = size
                 title_lines = lines
@@ -303,84 +315,79 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
             lines.append(' '.join(current_line))
         title_lines = lines
         title_font_size = 32
-    
-    # Рисуем заголовок построчно с межстрочным интервалом
+
     title_font = load_font(title_font_size, 'bold')
     purple_font = load_font(title_font_size, 'bold')
-    
-    # Вычисляем высоту строки
+
     line_bbox = draw.textbbox((0, 0), "A", font=title_font)
     line_height = line_bbox[3] - line_bbox[1]
-    
+
     current_y = title_y
     for line_idx, line in enumerate(title_lines):
-        # Разбиваем строку на слова
         words_in_line = line.split()
         current_x = 50
-        
+
         for word in words_in_line:
-            # Проверяем, нужно ли выделить слово
             is_highlighted = word in [w.upper() for w in highlight_words]
             font = purple_font if is_highlighted else title_font
-            color = '#6C3CE1' if is_highlighted else 'black'
-            
+            color = '#6C3CE1' if is_highlighted else text_color
+
             draw.text((current_x, current_y), word, font=font, fill=color)
-            
+
             word_bbox = draw.textbbox((0, 0), word, font=font)
             word_width = word_bbox[2] - word_bbox[0]
-            current_x += word_width + 10  # пробел между словами
-        
-        # Переход на следующую строку с межстрочным интервалом
+            current_x += word_width + 10
+
         current_y += line_height + TITLE_LINE_SPACING
-    
-    title_end_y = current_y - TITLE_LINE_SPACING  # Убираем лишний интервал после последней строки
-    
+
+    title_end_y = current_y - TITLE_LINE_SPACING
+
     logging.info(f"📐 Размер заголовка: {title_font_size}px, строк: {len(title_lines)}, межстрочный интервал: {TITLE_LINE_SPACING}px")
-    
+
     # ============================================================
-    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ
+    # ШАГ 5: ФИОЛЕТОВАЯ ЛИНИЯ (на 7px ниже)
     # ============================================================
     LINE_TOP = title_end_y + LINE_TOP_OFFSET
     draw.rectangle(
         [50, LINE_TOP, W - 50, LINE_TOP + LINE_HEIGHT],
         fill='#6C3CE1'
     )
-    
+
     # ============================================================
     # ШАГ 6: ТЕКСТ НОВОСТИ
     # ============================================================
     text_y = LINE_TOP + LINE_HEIGHT + TEXT_TOP_OFFSET
-    
+
     available_text_height = H - text_y - 50
-    
+
     if content and content != "Текст отсутствует":
         paragraphs = content.split('\n\n')
         paragraphs = [p.strip() for p in paragraphs if p.strip()]
     else:
         paragraphs = ["Текст отсутствует"]
-    
+
     text_font_size = 34
     wrapped_paragraphs = []
-    
+
     for size in range(42, 20, -2):
         test_font = load_font(size, 'regular')
-        
+
         single_bbox = draw.textbbox((0, 0), "A", font=test_font)
         single_h = single_bbox[3] - single_bbox[1]
-        
+
         total_height = 0
         temp_wrapped = []
-        
+
         for para in paragraphs:
             chars_per_line = int((W - 100) / (size * 0.6))
             wrapped = textwrap.wrap(para, width=chars_per_line)
             if not wrapped:
                 wrapped = [para]
             temp_wrapped.append(wrapped)
-            
+
             para_height = len(wrapped) * (single_h + 8)
             total_height += para_height + 18
-        
+
         if total_height <= available_text_height:
             text_font_size = size
             wrapped_paragraphs = temp_wrapped
@@ -389,7 +396,7 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
         text_font = load_font(20, 'regular')
         single_bbox = draw.textbbox((0, 0), "A", font=text_font)
         single_h = single_bbox[3] - single_bbox[1]
-        
+
         for para in paragraphs:
             chars_per_line = int((W - 100) / (20 * 0.6))
             wrapped = textwrap.wrap(para, width=chars_per_line)
@@ -397,20 +404,20 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
                 wrapped = [para]
             wrapped_paragraphs.append(wrapped)
         text_font_size = 20
-    
+
     text_font = load_font(text_font_size, 'regular')
     single_bbox = draw.textbbox((0, 0), "A", font=text_font)
     single_h = single_bbox[3] - single_bbox[1]
-    
+
     pos_y = text_y
     for para_idx, para_lines in enumerate(wrapped_paragraphs):
         for line in para_lines:
-            draw.text((50, pos_y), line, font=text_font, fill='black')
+            draw.text((50, pos_y), line, font=text_font, fill=text_color)
             pos_y += single_h + 8
         pos_y += 18
-    
+
     logging.info(f"📐 Размер текста: {text_font_size}px, абзацев: {len(wrapped_paragraphs)}")
-    
+
     # ============================================================
     # ШАГ 7: СОХРАНЯЕМ
     # ============================================================
@@ -419,10 +426,10 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
         buffer = io.BytesIO()
         canvas.save(buffer, format='PNG')
         buffer.seek(0)
-        
+
         with open(output_path, 'wb') as f:
             f.write(buffer.getvalue())
-        
+
         logging.info(f"✅ Сторис сохранена: {output_path}")
         return output_path
     except Exception as e:
@@ -431,24 +438,26 @@ async def generate_story(photo_path: str, title: str, content: str, rubric: str,
         return output_path
 
 # ========== ОБЩАЯ ФУНКЦИЯ ==========
-async def process_story(user_id: int, photo_path: str, title: str, content: str, rubric: str, highlight_words: list, message: types.Message):
+async def process_story(user_id: int, photo_path: str, title: str, content: str,
+                        rubric: str, highlight_words: list, message: types.Message,
+                        theme: str = "light"):
     try:
-        output = await generate_story(photo_path, title, content, rubric, highlight_words)
-        
+        output = await generate_story(photo_path, title, content, rubric, highlight_words, theme)
+
         with open(output, 'rb') as photo_file:
             await bot.send_photo(
                 chat_id=user_id,
                 photo=photo_file,
                 caption="✅ Готово! 🎞️"
             )
-        
+
         for file_path in [photo_path, output]:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
             except Exception as e:
                 logging.warning(f"⚠️ Не удалось удалить файл {file_path}: {e}")
-        
+
         return True
     except Exception as e:
         logging.error(f"❌ Ошибка: {str(e)}")
@@ -461,7 +470,16 @@ def get_rubric_keyboard():
     buttons = []
     for rubric in RUBRICS:
         buttons.append(InlineKeyboardButton(rubric, callback_data=f"rubric_{rubric}"))
+    buttons.append(InlineKeyboardButton("🚫 БЕЗ РУБРИКИ", callback_data="rubric_none"))
     keyboard.add(*buttons)
+    return keyboard
+
+def get_theme_keyboard():
+    keyboard = InlineKeyboardMarkup(row_width=2)
+    keyboard.add(
+        InlineKeyboardButton("☀️ Светлая", callback_data="theme_light"),
+        InlineKeyboardButton("🌙 Тёмная", callback_data="theme_dark"),
+    )
     return keyboard
 
 # ========== ХЕНДЛЕРЫ ==========
@@ -475,20 +493,20 @@ async def start(message: types.Message):
         "📱 Привет! Я делаю стильные сторис!\n\n"
         "Просто отправь мне РЕПОСТ любого поста с фото и текстом.\n"
         "Затем я попрошу ввести слова для выделения (через запятую или пробел).\n"
-        "Потом выбери рубрику!"
+        "Потом выбери тему и рубрику!"
     )
 
 @dp.message_handler(content_types=['photo', 'document'])
 async def handle_photo_or_document(message: types.Message):
     user_id = message.from_user.id
     is_forward = message.forward_from or message.forward_from_chat or message.forward_date
-    
+
     if is_forward:
         await message.answer("📥 Обнаружен репост! Обрабатываю...")
-        
+
         text = message.text or message.caption or ""
         photo_file_path = None
-        
+
         if message.photo:
             file = await bot.get_file(message.photo[-1].file_id)
             photo_file_path = f"temp_{user_id}_forward.jpg"
@@ -500,7 +518,7 @@ async def handle_photo_or_document(message: types.Message):
         else:
             await message.answer("❌ В репосте нет фото!")
             return
-        
+
         text = text.replace("**Текст отсутствует**", "").strip()
         lines = text.split('\n')
         clean_lines = []
@@ -509,20 +527,20 @@ async def handle_photo_or_document(message: types.Message):
             if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
                 clean_lines.append(line)
         text = '\n'.join(clean_lines)
-        
+
         title, content = parse_text(text)
-        
+
         if not title and text:
             sentences = re.split(r'(?<=[.!?])\s+', text.strip())
             if sentences:
                 title = sentences[0]
                 content = ". ".join(sentences[1:])
-        
+
         if not title:
             title = "ЗДЕСЬ БУДЕТ ЗАГОЛОВОК ВАШЕЙ НОВОСТИ"
         if not content:
             content = "Текст отсутствует"
-        
+
         user_data[user_id] = {
             "photo": photo_file_path,
             "title": title,
@@ -530,7 +548,7 @@ async def handle_photo_or_document(message: types.Message):
             "highlight_words": [],
             "step": "waiting_highlight_words"
         }
-        
+
         await message.answer(
             f"📝 Заголовок:\n{title}\n\n"
             f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
@@ -539,18 +557,18 @@ async def handle_photo_or_document(message: types.Message):
             f"Если не хочешь выделять - отправь 'нет' или '-'"
         )
         return
-    
+
     # Ручной ввод фото
     if user_id not in user_data:
         user_data[user_id] = {"step": "waiting_photo"}
-    
+
     caption = message.caption or ""
     if caption:
         title, content = parse_text(caption)
         file = await bot.get_file(message.photo[-1].file_id)
         file_path = f"temp_{user_id}.jpg"
         await bot.download_file(file.file_path, file_path)
-        
+
         user_data[user_id] = {
             "photo": file_path,
             "title": title,
@@ -558,7 +576,7 @@ async def handle_photo_or_document(message: types.Message):
             "highlight_words": [],
             "step": "waiting_highlight_words"
         }
-        
+
         await message.answer(
             f"📝 Заголовок:\n{title}\n\n"
             f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
@@ -567,7 +585,7 @@ async def handle_photo_or_document(message: types.Message):
             f"Если не хочешь выделять - отправь 'нет' или '-'"
         )
         return
-    
+
     file = await bot.get_file(message.photo[-1].file_id)
     file_path = f"temp_{user_id}.jpg"
     await bot.download_file(file.file_path, file_path)
@@ -578,26 +596,26 @@ async def handle_photo_or_document(message: types.Message):
 @dp.message_handler(content_types=['text'])
 async def handle_text(message: types.Message):
     user_id = message.from_user.id
-    
+
     if message.text.startswith('/'):
         return
-    
+
     if user_id not in user_data:
         await start(message)
         return
-    
+
     step = user_data[user_id].get("step", "")
-    
+
     if step == "waiting_title":
         user_data[user_id]["title"] = message.text
         user_data[user_id]["step"] = "waiting_content"
         await message.answer("✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
         return
-    
+
     if step == "waiting_content":
         user_data[user_id]["content"] = message.text
         title = user_data[user_id]["title"]
-        
+
         await message.answer(
             f"📝 Заголовок:\n{title}\n\n"
             f"✏️ Отправь слова, которые нужно выделить фиолетовым цветом.\n"
@@ -607,10 +625,10 @@ async def handle_text(message: types.Message):
         )
         user_data[user_id]["step"] = "waiting_highlight_words"
         return
-    
+
     if step == "waiting_highlight_words":
         text = message.text.strip()
-        
+
         if text.lower() in ['нет', '-', 'без', 'none', 'skip', 'не надо']:
             user_data[user_id]["highlight_words"] = []
         else:
@@ -618,69 +636,94 @@ async def handle_text(message: types.Message):
                 words = [w.strip() for w in text.split(',') if w.strip()]
             else:
                 words = text.split()
-            
+
             words = [w for w in words if len(w) > 2]
             user_data[user_id]["highlight_words"] = words
-        
-        user_data[user_id]["step"] = "waiting_rubric"
-        
+
+        user_data[user_id]["step"] = "waiting_theme"
+
         highlight_info = f"Выделенные слова: {', '.join(user_data[user_id]['highlight_words']) if user_data[user_id]['highlight_words'] else 'Нет'}"
         await message.answer(
             f"✅ Слова сохранены!\n{highlight_info}\n\n"
-            f"📌 Теперь выберите рубрику для этой статьи:",
-            reply_markup=get_rubric_keyboard()
+            f"🎨 Выберите тему оформления:",
+            reply_markup=get_theme_keyboard()
         )
         return
-    
+
     await message.answer(
         "❓ Я не понял. Пожалуйста, следуй инструкциям.\n"
         "Если хочешь начать заново - отправь /start"
     )
 
+@dp.callback_query_handler(lambda c: c.data and c.data.startswith('theme_'))
+async def process_theme_callback(callback_query: types.CallbackQuery):
+    user_id = callback_query.from_user.id
+    theme = "dark" if callback_query.data == "theme_dark" else "light"
+
+    if user_id not in user_data or user_data[user_id].get("step") != "waiting_theme":
+        await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
+        return
+
+    user_data[user_id]["theme"] = theme
+    user_data[user_id]["step"] = "waiting_rubric"
+
+    await callback_query.answer(f"✅ Тема: {'тёмная' if theme == 'dark' else 'светлая'}")
+    await callback_query.message.edit_text(
+        f"🎨 Тема: {'🌙 Тёмная' if theme == 'dark' else '☀️ Светлая'}\n\n"
+        f"📌 Теперь выберите рубрику (или «Без неё»):",
+        reply_markup=get_rubric_keyboard()
+    )
+
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('rubric_'))
 async def process_rubric_callback(callback_query: types.CallbackQuery):
     user_id = callback_query.from_user.id
-    rubric = callback_query.data.replace('rubric_', '')
-    
+    raw = callback_query.data.replace('rubric_', '')
+    rubric = None if raw == 'none' else raw
+
     if user_id not in user_data:
         await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
         return
-    
+
     step = user_data[user_id].get("step", "")
     if step != "waiting_rubric":
         await callback_query.answer("❌ Пожалуйста, начните заново с отправки репоста.")
         return
-    
+
     user_data[user_id]["rubric"] = rubric
     user_data[user_id]["step"] = "done"
-    
-    await callback_query.answer(f"✅ Выбрана рубрика: {rubric}")
-    
+
+    await callback_query.answer(f"✅ Рубрика: {rubric if rubric else 'без рубрики'}")
+
     photo_path = user_data[user_id]["photo"]
     title = user_data[user_id]["title"]
     content = user_data[user_id]["content"]
     highlight_words = user_data[user_id].get("highlight_words", [])
-    
-    await callback_query.message.edit_text(f"⏳ Генерирую сторис с рубрикой '{rubric}'...")
-    await process_story(user_id, photo_path, title, content, rubric, highlight_words, callback_query.message)
-    
+    theme = user_data[user_id].get("theme", "light")
+
+    await callback_query.message.edit_text(
+        f"⏳ Генерирую сторис ({'тёмная' if theme == 'dark' else 'светлая'} тема"
+        f"{', рубрика: ' + rubric if rubric else ', без рубрики'})..."
+    )
+    await process_story(user_id, photo_path, title, content, rubric, highlight_words,
+                        callback_query.message, theme)
+
     if user_id in user_data:
         del user_data[user_id]
 
 # ========== ЗАПУСК ==========
 if __name__ == "__main__":
     from aiogram import executor
-    
+
     print("🚀 Бот запускается...")
     print("⚠️ Убедитесь, что запущен только ОДИН экземпляр бота!")
-    
+
     async def on_startup(dp):
         try:
             await bot.delete_webhook()
             print("✅ Вебхук удален")
         except Exception as e:
             print(f"⚠️ Ошибка удаления вебхука: {e}")
-    
+
     try:
         executor.start_polling(dp, skip_updates=True, on_startup=on_startup)
     except Exception as e:
