@@ -18,7 +18,7 @@ if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
 FONT_PATHS = [
-    "Inter-Black.ttf",          # главный шрифт — лежит в корне репозитория
+    "Inter-Black.ttf",          # лежит в корне репозитория
     "Inter-Bold.ttf",
     "Inter-Regular.ttf",
     "Inter-Medium.ttf",
@@ -81,17 +81,18 @@ dp.middleware.setup(LoggingMiddleware())
 
 def load_font(size, weight='regular'):
     """
-    Загрузка шрифта.
-    Для инста-шаблона используется weight='black' — Inter-Black.ttf из корня.
-    Фолбэк — Bold/Regular/системные шрифты, чтобы бот не падал без файла.
+    Веса:
+      'black'   -> Inter-Black.ttf (заголовки в инста-шаблоне)
+      'bold'    -> Inter-Bold.ttf (заголовки в классике)
+      'regular' -> Inter-Regular.ttf (основной текст)
     """
     font_names = {
         'black':   ["Inter-Black.ttf"] + FONT_PATHS,
-        'bold':    ["Inter-Black.ttf"] + FONT_PATHS[:4],
+        'bold':    ["Inter-Bold.ttf", "Inter-Black.ttf"] + FONT_PATHS,
         'medium':  [FONT_PATHS[3], FONT_PATHS[1], FONT_PATHS[5]],
-        'regular': [FONT_PATHS[2], FONT_PATHS[1]] + FONT_PATHS[4:]
+        'regular': ["Inter-Regular.ttf", "Inter-Bold.ttf"] + FONT_PATHS[4:]
     }
-    paths = font_names.get(weight, [FONT_PATHS[2], FONT_PATHS[1]] + FONT_PATHS[4:])
+    paths = font_names.get(weight, ["Inter-Regular.ttf", "Inter-Bold.ttf"] + FONT_PATHS[4:])
     for path in paths:
         try:
             if os.path.exists(path):
@@ -396,7 +397,6 @@ def wrap_title_by_width(draw, text, font, max_width):
         lines.append(' '.join(cur))
     return lines
 
-# Строгий перенос текста по РЕАЛЬНОЙ ширине через textbbox
 def wrap_text_strict(draw, text, font, max_width):
     words = text.split()
     lines, cur = [], []
@@ -459,7 +459,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     title_font_size = I_TITLE_FONT_MAX
     title_lines = []
 
-    # Inter-Black для подбора размера заголовка
+    # === ЗАГОЛОВОК: Inter-Black ===
     for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
         tf = load_font(size, 'black')
         lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
@@ -479,7 +479,6 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         title_lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
         title_font_size = I_TITLE_FONT_MIN
 
-    # Inter-Black для отрисовки заголовка
     title_font = load_font(title_font_size, 'black')
     lb = draw.textbbox((0, 0), "A", font=title_font)
     lh = lb[3] - lb[1]
@@ -508,8 +507,8 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         cur_y = y2 + I_TITLE_LINE_GAP
 
     # ==========================================
-    # ОСНОВНОЙ ТЕКСТ (Inter-Black)
-    # Строго привязываем ширину текста к ширине самой широкой плашки.
+    # ОСНОВНОЙ ТЕКСТ (Inter-Regular)
+    # Ширина строки = ширине самой широкой плашки минус 4px запаса
     # ==========================================
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
@@ -524,9 +523,9 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     text_font_size = I_TEXT_FONT_MAX
     wrapped_paragraphs = []
 
-    # Inter-Black для подбора размера основного текста
+    # === ОСНОВНОЙ ТЕКСТ: Inter-Regular ===
     for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
-        tf = load_font(size, 'black')
+        tf = load_font(size, 'regular')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
 
@@ -544,14 +543,13 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
             break
 
     if not wrapped_paragraphs:
-        tf = load_font(I_TEXT_FONT_MIN, 'black')
+        tf = load_font(I_TEXT_FONT_MIN, 'regular')
         for para in paragraphs:
             lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
             wrapped_paragraphs.append(lines)
         text_font_size = I_TEXT_FONT_MIN
 
-    # Inter-Black для отрисовки основного текста
-    text_font = load_font(text_font_size, 'black')
+    text_font = load_font(text_font_size, 'regular')
     sb = draw.textbbox((0, 0), "A", font=text_font)
     sh = sb[3] - sb[1]
 
