@@ -17,8 +17,18 @@ API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
+ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+if ADMIN_CHAT_ID:
+    try:
+        ADMIN_CHAT_ID = int(ADMIN_CHAT_ID)
+    except ValueError:
+        ADMIN_CHAT_ID = None
+        logging.warning("⚠️ ADMIN_CHAT_ID должен быть числом — сторис будут уходить в канал")
+else:
+    logging.warning("⚠️ ADMIN_CHAT_ID не задан — сторис будут уходить в канал")
+
 FONT_PATHS = [
-    "Inter-Black.ttf",          # в корне репозитория
+    "Inter-Black.ttf",
     "Inter-Bold.ttf",
     "Inter-Regular.ttf",
     "Inter-Medium.ttf",
@@ -80,13 +90,6 @@ dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
 def load_font(size, weight='regular'):
-    """
-    Веса:
-      'black'     -> Inter-Black.ttf (заголовки в инста-шаблоне)
-      'bold'      -> Inter-Bold.ttf (заголовки в классике)
-      'bold_text' -> Inter-Bold.ttf (основной текст в инста-шаблоне)
-      'regular'   -> Inter-Regular.ttf (основной текст в классике)
-    """
     font_names = {
         'black':     ["Inter-Black.ttf"] + FONT_PATHS,
         'bold':      ["Inter-Bold.ttf", "Inter-Black.ttf"] + FONT_PATHS,
@@ -510,7 +513,6 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
 
     # ==========================================
     # ОСНОВНОЙ ТЕКСТ (Inter-Bold)
-    # Ширина строки = ширине самой широкой плашки минус 4px запаса
     # ==========================================
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
@@ -525,7 +527,6 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     text_font_size = I_TEXT_FONT_MAX
     wrapped_paragraphs = []
 
-    # === ОСНОВНОЙ ТЕКСТ: Inter-Bold ===
     for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
         tf = load_font(size, 'bold_text')
         sb = draw.textbbox((0, 0), "A", font=tf)
@@ -632,13 +633,18 @@ user_data = {}
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     user_id = message.from_user.id
+    logging.info(f"👤 /start от user_id={user_id}, username=@{message.from_user.username}")
     user_data[user_id] = {"step": "waiting_photo"}
     await bot.send_message(
         user_id,
-        "📱 Привет! Я делаю стильные сторис!\n\n"
-        "Отправь мне РЕПОСТ любого поста с фото и текстом.\n"
-        "Дальше — шаблон, тема, рубрика и выделение слов (если нужно).\n\n"
-        "✨ Эмодзи и смайлики из текста автоматически убираются."
+        f"📱 Привет! Я делаю стильные сторис!\n\n"
+        f"🆔 Твой user_id: <code>{user_id}</code>\n"
+        f"(пригодится для ADMIN_CHAT_ID)\n\n"
+        f"Отправь мне РЕПОСТ любого поста с фото и текстом.\n"
+        f"Дальше — шаблон, тема, рубрика и выделение слов (если нужно).\n\n"
+        f"📢 Также я автоматически присылаю сюда сторис, "
+        f"когда в канале (где я админ) выходит новый пост.",
+        parse_mode="HTML"
     )
 
 @dp.message_handler(content_types=['photo', 'document'])
@@ -919,6 +925,106 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
     if user_id in user_data:
         del user_data[user_id]
 
+# ========== ХЕНДЛЕР: НОВЫЙ ПОСТ В КАНАЛЕ ==========
+@dp.channel_post_handler(content_types=['photo', 'document', 'text'])
+async def handle_channel_post(message: types.Message):
+    """
+    Ловит новые посты в канале, где бот администратор.
+    Автоматически генерирует инста-сторис (dark + light) и присылает в ADMIN_CHAT_ID.
+    """
+    chat_title = message.chat.title or str(message.chat.id)
+    logging.info(f"📢 Новый пост в канале «{chat_title}» (id={message.chat.id})")
+
+    text = message.text or message.caption or ""
+    if not text.strip():
+        logging.info("⏭ Пост без текста — пропускаю")
+        return
+
+    # Куда слать готовые сторис
+    if ADMIN_CHAT_ID:
+        target_chat = ADMIN_CHAT_ID
+    else:
+        target_chat = message.chat.id
+        logging.warning("⚠️ ADMIN_CHAT_ID не задан — отправляю в канал")
+
+    # Скачиваем фото (если есть)
+    photo_file_path = None
+    try:
+        if message.photo:
+            file = await bot.get_file(message.photo[-1].file_id)
+            photo_file_path = f"temp_ch_{message.chat.id}_{message.message_id}.jpg"
+            await bot.download_file(file.file_path, photo_file_path)
+        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
+            file = await bot.get_file(message.document.file_id)
+            photo_file_path = f"temp_ch_{message.chat.id}_{message.message_id}.jpg"
+            await bot.download_file(file.file_path, photo_file_path)
+    except Exception as e:
+        logging.error(f"❌ Не удалось скачать фото из канала: {e}")
+
+    # Чистим текст
+    text = text.replace("**Текст отсутствует**", "").strip()
+    lines = text.split('\n')
+    clean_lines = []
+    for line in lines:
+        line = line.strip()
+        if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
+            clean_lines.append(line)
+    text = '\n'.join(clean_lines)
+    text = remove_emojis(text)
+
+    title, content = parse_text(text)
+    if not title and text:
+        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+        if sentences:
+            title = sentences[0]
+            content = ". ".join(sentences[1:])
+    if not title:
+        title = "ЗАГОЛОВОК НОВОСТИ"
+    if not content:
+        content = "Текст отсутствует"
+
+    photo_for_gen = photo_file_path if photo_file_path else "nonexistent.jpg"
+
+    try:
+        await bot.send_message(
+            target_chat,
+            f"📢 Новый пост в канале «{chat_title}»\n"
+            f"🎨 Генерирую сторис (Инста)..."
+        )
+
+        dark_output = await generate_story_insta(photo_for_gen, title, content, theme="dark")
+        with open(dark_output, 'rb') as f:
+            await bot.send_photo(
+                chat_id=target_chat,
+                photo=f,
+                caption=f"📸 Инста-дизайн · 🌙 Тёмная\n\n📝 {title[:120]}"
+            )
+
+        light_output = await generate_story_insta(photo_for_gen, title, content, theme="light")
+        with open(light_output, 'rb') as f:
+            await bot.send_photo(
+                chat_id=target_chat,
+                photo=f,
+                caption=f"📸 Инста-дизайн · ☀️ Светлая\n\n📝 {title[:120]}"
+            )
+
+        logging.info(f"✅ Сторис для «{chat_title}» отправлены в {target_chat}")
+
+    except Exception as e:
+        logging.error(f"❌ Ошибка генерации сторис для канала: {e}")
+        try:
+            await bot.send_message(target_chat, f"❌ Ошибка: {e}")
+        except:
+            pass
+
+    finally:
+        for p in [photo_file_path]:
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except Exception as e:
+                logging.warning(f"⚠️ Не удалось удалить {p}: {e}")
+
 # ========== ЗАПУСК ==========
 async def on_startup(dp):
     try:
@@ -934,6 +1040,11 @@ async def on_startup(dp):
         print(f"✅ Бот: @{me.username} (id={me.id})")
     except Exception as e:
         print(f"⚠️ get_me failed: {e}")
+
+    if ADMIN_CHAT_ID:
+        print(f"📥 Готовые сторис будут приходить в чат: {ADMIN_CHAT_ID}")
+    else:
+        print("⚠️ ADMIN_CHAT_ID не задан — сторис будут публиковаться в канал")
 
 async def on_shutdown(dp):
     try:
