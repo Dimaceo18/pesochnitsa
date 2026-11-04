@@ -18,7 +18,7 @@ if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
 FONT_PATHS = [
-    "Inter-Black.ttf",          # лежит в корне репозитория
+    "Inter-Black.ttf",          # в корне репозитория
     "Inter-Bold.ttf",
     "Inter-Regular.ttf",
     "Inter-Medium.ttf",
@@ -82,15 +82,17 @@ dp.middleware.setup(LoggingMiddleware())
 def load_font(size, weight='regular'):
     """
     Веса:
-      'black'   -> Inter-Black.ttf (заголовки в инста-шаблоне)
-      'bold'    -> Inter-Bold.ttf (заголовки в классике)
-      'regular' -> Inter-Regular.ttf (основной текст)
+      'black'     -> Inter-Black.ttf (заголовки в инста-шаблоне)
+      'bold'      -> Inter-Bold.ttf (заголовки в классике)
+      'bold_text' -> Inter-Bold.ttf (основной текст в инста-шаблоне)
+      'regular'   -> Inter-Regular.ttf (основной текст в классике)
     """
     font_names = {
-        'black':   ["Inter-Black.ttf"] + FONT_PATHS,
-        'bold':    ["Inter-Bold.ttf", "Inter-Black.ttf"] + FONT_PATHS,
-        'medium':  [FONT_PATHS[3], FONT_PATHS[1], FONT_PATHS[5]],
-        'regular': ["Inter-Regular.ttf", "Inter-Bold.ttf"] + FONT_PATHS[4:]
+        'black':     ["Inter-Black.ttf"] + FONT_PATHS,
+        'bold':      ["Inter-Bold.ttf", "Inter-Black.ttf"] + FONT_PATHS,
+        'bold_text': ["Inter-Bold.ttf", "Inter-Black.ttf"] + FONT_PATHS,
+        'medium':    [FONT_PATHS[3], FONT_PATHS[1], FONT_PATHS[5]],
+        'regular':   ["Inter-Regular.ttf", "Inter-Bold.ttf"] + FONT_PATHS[4:]
     }
     paths = font_names.get(weight, ["Inter-Regular.ttf", "Inter-Bold.ttf"] + FONT_PATHS[4:])
     for path in paths:
@@ -507,7 +509,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         cur_y = y2 + I_TITLE_LINE_GAP
 
     # ==========================================
-    # ОСНОВНОЙ ТЕКСТ (Inter-Regular)
+    # ОСНОВНОЙ ТЕКСТ (Inter-Bold)
     # Ширина строки = ширине самой широкой плашки минус 4px запаса
     # ==========================================
     text_y = cur_y + I_TEXT_TOP_GAP
@@ -523,9 +525,9 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     text_font_size = I_TEXT_FONT_MAX
     wrapped_paragraphs = []
 
-    # === ОСНОВНОЙ ТЕКСТ: Inter-Regular ===
+    # === ОСНОВНОЙ ТЕКСТ: Inter-Bold ===
     for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
-        tf = load_font(size, 'regular')
+        tf = load_font(size, 'bold_text')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
 
@@ -543,13 +545,13 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
             break
 
     if not wrapped_paragraphs:
-        tf = load_font(I_TEXT_FONT_MIN, 'regular')
+        tf = load_font(I_TEXT_FONT_MIN, 'bold_text')
         for para in paragraphs:
             lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
             wrapped_paragraphs.append(lines)
         text_font_size = I_TEXT_FONT_MIN
 
-    text_font = load_font(text_font_size, 'regular')
+    text_font = load_font(text_font_size, 'bold_text')
     sb = draw.textbbox((0, 0), "A", font=text_font)
     sh = sb[3] - sb[1]
 
