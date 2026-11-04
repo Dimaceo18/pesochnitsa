@@ -18,6 +18,7 @@ if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
 
 FONT_PATHS = [
+    "Inter-Black.ttf",          # главный шрифт — лежит в корне репозитория
     "Inter-Bold.ttf",
     "Inter-Regular.ttf",
     "Inter-Medium.ttf",
@@ -79,18 +80,25 @@ dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
 def load_font(size, weight='regular'):
+    """
+    Загрузка шрифта.
+    Для инста-шаблона используется weight='black' — Inter-Black.ttf из корня.
+    Фолбэк — Bold/Regular/системные шрифты, чтобы бот не падал без файла.
+    """
     font_names = {
-        'bold': FONT_PATHS[:3],
-        'medium': [FONT_PATHS[2], FONT_PATHS[0], FONT_PATHS[4]],
-        'regular': FONT_PATHS[1:3] + FONT_PATHS[3:5]
+        'black':   ["Inter-Black.ttf"] + FONT_PATHS,
+        'bold':    ["Inter-Black.ttf"] + FONT_PATHS[:4],
+        'medium':  [FONT_PATHS[3], FONT_PATHS[1], FONT_PATHS[5]],
+        'regular': [FONT_PATHS[2], FONT_PATHS[1]] + FONT_PATHS[4:]
     }
-    paths = font_names.get(weight, FONT_PATHS[1:3] + FONT_PATHS[3:5])
+    paths = font_names.get(weight, [FONT_PATHS[2], FONT_PATHS[1]] + FONT_PATHS[4:])
     for path in paths:
         try:
             if os.path.exists(path):
                 return ImageFont.truetype(path, size)
         except:
             continue
+    logging.warning(f"⚠️ Шрифт не найден (weight={weight}, size={size}), используется дефолтный")
     return ImageFont.load_default()
 
 def remove_emojis(text: str) -> str:
@@ -441,7 +449,7 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         draw.rectangle([I_PHOTO_LEFT, I_PHOTO_TOP, I_PHOTO_LEFT + I_PHOTO_WIDTH, I_PHOTO_TOP + I_PHOTO_HEIGHT],
                       fill=placeholder_bg, outline=placeholder_outline, width=2)
         draw.text((IW // 2 - 50, I_PHOTO_HEIGHT // 2 - 10),
-                 "📷 ФОТО", font=load_font(28, 'bold'), fill=placeholder_text)
+                 "📷 ФОТО", font=load_font(28, 'black'), fill=placeholder_text)
 
     max_width = IW - 2 * I_MARGIN_X
 
@@ -451,8 +459,9 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     title_font_size = I_TITLE_FONT_MAX
     title_lines = []
 
+    # Inter-Black для подбора размера заголовка
     for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
-        tf = load_font(size, 'bold')
+        tf = load_font(size, 'black')
         lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
 
         lb = draw.textbbox((0, 0), "A", font=tf)
@@ -466,11 +475,12 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
             break
 
     if not title_lines:
-        tf = load_font(I_TITLE_FONT_MIN, 'bold')
+        tf = load_font(I_TITLE_FONT_MIN, 'black')
         title_lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
         title_font_size = I_TITLE_FONT_MIN
 
-    title_font = load_font(title_font_size, 'bold')
+    # Inter-Black для отрисовки заголовка
+    title_font = load_font(title_font_size, 'black')
     lb = draw.textbbox((0, 0), "A", font=title_font)
     lh = lb[3] - lb[1]
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
@@ -488,24 +498,22 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         y1 = cur_y
         x2 = x1 + plate_w
         y2 = y1 + plate_h
-        
+
         draw_rounded_rect_highres(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, plate_color)
-        
+
         center_x = x1 + plate_w / 2
         center_y = y1 + plate_h / 2
         draw.text((center_x, center_y), line, font=title_font, fill=title_text_color, anchor="mm")
-        
+
         cur_y = y2 + I_TITLE_LINE_GAP
 
     # ==========================================
-    # ОСНОВНОЙ ТЕКСТ
+    # ОСНОВНОЙ ТЕКСТ (Inter-Black)
     # Строго привязываем ширину текста к ширине самой широкой плашки.
-    # Запас 2px по краям для уверенности.
     # ==========================================
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
-    
-    # Максимальная ширина для ОДНОЙ СТРОКИ текста = ширина самой плашки минус 4px запаса
+
     text_line_max_width = max_plate_w - 4
 
     if content and content != "Текст отсутствует":
@@ -515,43 +523,41 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
 
     text_font_size = I_TEXT_FONT_MAX
     wrapped_paragraphs = []
-    
-    # Подбор размера шрифта и одновременный строгий перенос
+
+    # Inter-Black для подбора размера основного текста
     for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
-        tf = load_font(size, 'regular')
+        tf = load_font(size, 'black')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
-        
+
         total_h = 0
         tmp_paragraphs = []
-        
+
         for para in paragraphs:
-            # Используем строгий перенос по реальной ширине
             lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
             tmp_paragraphs.append(lines)
             total_h += len(lines) * (sh + I_TEXT_LINE_GAP) + I_TEXT_PARA_GAP
-            
+
         if total_h <= available_h:
             text_font_size = size
             wrapped_paragraphs = tmp_paragraphs
             break
-            
+
     if not wrapped_paragraphs:
-        # Если даже минимальный шрифт не влезает, принудительно ставим минимальный и рвем
-        tf = load_font(I_TEXT_FONT_MIN, 'regular')
+        tf = load_font(I_TEXT_FONT_MIN, 'black')
         for para in paragraphs:
             lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
             wrapped_paragraphs.append(lines)
         text_font_size = I_TEXT_FONT_MIN
 
-    text_font = load_font(text_font_size, 'regular')
+    # Inter-Black для отрисовки основного текста
+    text_font = load_font(text_font_size, 'black')
     sb = draw.textbbox((0, 0), "A", font=text_font)
     sh = sb[3] - sb[1]
-    
+
     pos_y = text_y
     for para_lines in wrapped_paragraphs:
         for line in para_lines:
-            # Рисуем ровно по левому краю отступа
             draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=text_color)
             pos_y += sh + I_TEXT_LINE_GAP
         pos_y += I_TEXT_PARA_GAP
@@ -816,33 +822,33 @@ async def process_template_callback(callback_query: types.CallbackQuery):
         photo_path = user_data[user_id].get("photo")
         title = user_data[user_id].get("title")
         content = user_data[user_id].get("content")
-        
+
         if not photo_path or not title:
             await bot.send_message(user_id, "❌ Не хватает данных. Начните заново: /start")
             return
-            
+
         await bot.send_message(
             user_id,
             "⏳ Генерирую два варианта в шаблоне «Инста-дизайн»...\n"
             "1. Чёрно-белый (чёрный фон)\n"
             "2. Бело-чёрный (белый фон)"
         )
-        
+
         dark_output = await generate_story_insta(photo_path, title, content, theme="dark")
         with open(dark_output, 'rb') as photo_file:
             await bot.send_photo(chat_id=user_id, photo=photo_file, caption="1. Чёрно-белый (чёрный фон)")
-        
+
         light_output = await generate_story_insta(photo_path, title, content, theme="light")
         with open(light_output, 'rb') as photo_file:
             await bot.send_photo(chat_id=user_id, photo=photo_file, caption="2. Бело-чёрный (белый фон)")
-        
+
         for file_path in [photo_path, dark_output, light_output]:
             try:
                 if os.path.exists(file_path):
                     os.remove(file_path)
             except Exception as e:
                 logging.warning(f"⚠️ Не удалось удалить {file_path}: {e}")
-        
+
         if user_id in user_data:
             del user_data[user_id]
 
