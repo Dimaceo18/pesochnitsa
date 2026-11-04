@@ -53,7 +53,7 @@ RUBRIC_PADDING_Y = 12
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 90
 TITLE_MAX_WIDTH = W - 100
 TITLE_LINE_SPACING = 12
-LINE_TOP_OFFSET = 27
+LINE_TOP_OFFSET = 30          # было 27 — линия на 3 px ниже
 LINE_HEIGHT = 8
 TEXT_TOP_OFFSET = 15
 
@@ -358,7 +358,7 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
             pos_y += sh + 8
         pos_y += 18
 
-    output_path = "output_story.png"
+    output_path = f"output_story_classic_{theme}.png"
     canvas.save(output_path, format='PNG')
     return output_path
 
@@ -642,7 +642,8 @@ async def start(message: types.Message):
         f"(пригодится для ADMIN_CHAT_ID)\n\n"
         f"Отправь мне РЕПОСТ любого поста с фото и текстом.\n"
         f"Дальше — шаблон, тема, рубрика и выделение слов (если нужно).\n\n"
-        f"📢 Также я автоматически присылаю сюда сторис, "
+        f"📢 Также я автоматически присылаю сюда 4 варианта сторис "
+        f"(классик светлая/тёмная + инста светлая/тёмная), "
         f"когда в канале (где я админ) выходит новый пост.",
         parse_mode="HTML"
     )
@@ -930,7 +931,8 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
 async def handle_channel_post(message: types.Message):
     """
     Ловит новые посты в канале, где бот администратор.
-    Автоматически генерирует инста-сторис (dark + light) и присылает в ADMIN_CHAT_ID.
+    Генерирует 4 сторис (классик светлая/тёмная + инста светлая/тёмная)
+    и присылает их в ADMIN_CHAT_ID.
     """
     chat_title = message.chat.title or str(message.chat.id)
     logging.info(f"📢 Новый пост в канале «{chat_title}» (id={message.chat.id})")
@@ -940,14 +942,11 @@ async def handle_channel_post(message: types.Message):
         logging.info("⏭ Пост без текста — пропускаю")
         return
 
-    # Куда слать готовые сторис
-    if ADMIN_CHAT_ID:
-        target_chat = ADMIN_CHAT_ID
-    else:
-        target_chat = message.chat.id
+    target_chat = ADMIN_CHAT_ID if ADMIN_CHAT_ID else message.chat.id
+    if not ADMIN_CHAT_ID:
         logging.warning("⚠️ ADMIN_CHAT_ID не задан — отправляю в канал")
 
-    # Скачиваем фото (если есть)
+    # Скачиваем фото
     photo_file_path = None
     try:
         if message.photo:
@@ -985,40 +984,62 @@ async def handle_channel_post(message: types.Message):
 
     photo_for_gen = photo_file_path if photo_file_path else "nonexistent.jpg"
 
+    # Все 4 варианта: (шаблон, тема, подпись)
+    variants = [
+        ("classic", "light", "🎨 Классик · ☀️ Светлая"),
+        ("classic", "dark",  "🎨 Классик · 🌙 Тёмная"),
+        ("insta",   "light", "📸 Инста-дизайн · ☀️ Светлая"),
+        ("insta",   "dark",  "📸 Инста-дизайн · 🌙 Тёмная"),
+    ]
+
+    generated_files = []
+
     try:
         await bot.send_message(
             target_chat,
             f"📢 Новый пост в канале «{chat_title}»\n"
-            f"🎨 Генерирую сторис (Инста)..."
+            f"🎨 Генерирую 4 варианта сторис (классик + инста, светлая + тёмная)..."
         )
 
-        dark_output = await generate_story_insta(photo_for_gen, title, content, theme="dark")
-        with open(dark_output, 'rb') as f:
-            await bot.send_photo(
-                chat_id=target_chat,
-                photo=f,
-                caption=f"📸 Инста-дизайн · 🌙 Тёмная\n\n📝 {title[:120]}"
-            )
+        for template, theme, label in variants:
+            try:
+                if template == "classic":
+                    out_path = await generate_story_classic(
+                        photo_for_gen, title, content, None, [], theme
+                    )
+                else:
+                    out_path = await generate_story_insta(
+                        photo_for_gen, title, content, theme
+                    )
+                generated_files.append(out_path)
 
-        light_output = await generate_story_insta(photo_for_gen, title, content, theme="light")
-        with open(light_output, 'rb') as f:
-            await bot.send_photo(
-                chat_id=target_chat,
-                photo=f,
-                caption=f"📸 Инста-дизайн · ☀️ Светлая\n\n📝 {title[:120]}"
-            )
+                with open(out_path, 'rb') as f:
+                    await bot.send_photo(
+                        chat_id=target_chat,
+                        photo=f,
+                        caption=f"{label}\n\n📝 {title[:120]}"
+                    )
+            except Exception as e:
+                logging.error(f"❌ Ошибка генерации {template}/{theme}: {e}")
+                try:
+                    await bot.send_message(
+                        target_chat,
+                        f"❌ Не удалось сгенерировать {template}/{theme}: {e}"
+                    )
+                except:
+                    pass
 
         logging.info(f"✅ Сторис для «{chat_title}» отправлены в {target_chat}")
 
     except Exception as e:
-        logging.error(f"❌ Ошибка генерации сторис для канала: {e}")
+        logging.error(f"❌ Общая ошибка при генерации сторис для канала: {e}")
         try:
             await bot.send_message(target_chat, f"❌ Ошибка: {e}")
         except:
             pass
 
     finally:
-        for p in [photo_file_path]:
+        for p in [photo_file_path] + generated_files:
             try:
                 if p and os.path.exists(p):
                     os.remove(p)
