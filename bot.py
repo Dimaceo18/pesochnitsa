@@ -13,6 +13,8 @@ from aiogram.utils.exceptions import TerminatedByOtherGetUpdates
 import textwrap
 
 # ========== КОНФИГ ==========
+BOT_VERSION = "video-stories-v2"
+
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
     raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN.")
@@ -175,11 +177,8 @@ def fit_photo(photo: Image.Image, tw: int, th: int) -> Image.Image:
     return photo.crop((0, top, nw, top + th))
 
 
-# ========== РЕНДЕР СТАТИЧНОГО СЛОЯ (фото ИЛИ прозрачный верх для видео) ==========
+# ========== РЕНДЕР СТАТИЧНОГО СЛОЯ ==========
 def render_base_canvas(title, content, rubric, highlight_words, theme, photo_path=None, transparent_top=False):
-    """Возвращает PIL.Image 1080×1920.
-    Если transparent_top=True — верхняя зона (0..900) полностью прозрачна (RGBA),
-    туда будет наложено видео через FFmpeg."""
     is_dark = (theme == "dark")
     bg_color = 'black' if is_dark else 'white'
     text_color = 'white' if is_dark else 'black'
@@ -498,17 +497,15 @@ async def generate_story_insta(photo_path, title, content, theme="dark"):
 
 # ========== ВИДЕО-СТОРИС ==========
 def generate_video_story(video_path, title, content, rubric, highlight_words, theme, out_path):
-    """Собирает MP4: верхняя зона (0..900) — видео (обрезано до 30 сек),
-    нижняя часть — статичный текст."""
-    # 1. Статичная подложка с прозрачным верхом
+    logging.info(f"🎬 Старт генерации видео: {video_path} → {out_path}")
     base = render_base_canvas(
         title, content, rubric, highlight_words, theme,
         photo_path=None, transparent_top=True
     )
     base_path = f"base_{os.path.basename(out_path)}.png"
     base.save(base_path, format='PNG')
+    logging.info(f"🖼 Подложка сохранена: {base_path}")
 
-    # 2. FFmpeg: видео → 1080×900, обрезать до 30 сек, наложить на подложку
     filter_complex = (
         f"[0:v]trim=0:{VIDEO_MAX_DURATION},setpts=PTS-STARTPTS,"
         f"scale={PHOTO_WIDTH}:{PHOTO_HEIGHT}:force_original_aspect_ratio=increase,"
@@ -540,9 +537,17 @@ def generate_video_story(video_path, title, content, rubric, highlight_words, th
         os.remove(base_path)
     except Exception:
         pass
+
     if result.returncode != 0:
-        logging.error(f"❌ FFmpeg stderr: {result.stderr}")
-        raise RuntimeError(f"FFmpeg failed: {result.stderr[-500:]}")
+        logging.error(f"❌ FFmpeg returncode={result.returncode}")
+        logging.error(f"❌ FFmpeg stderr:\n{result.stderr}")
+        raise RuntimeError(f"FFmpeg failed ({result.returncode}): {result.stderr[-800:]}")
+
+    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
+        raise RuntimeError(f"FFmpeg завершился успешно, но файл {out_path} пуст или отсутствует")
+
+    size_mb = os.path.getsize(out_path) / (1024 * 1024)
+    logging.info(f"✅ Видео готово: {out_path} ({size_mb:.2f} MB)")
     return out_path
 
 
@@ -600,7 +605,6 @@ async def start(message: types.Message):
 
 
 async def _download_media(message: types.Message, user_id: int):
-    """Скачивает фото/документ-картинку/видео. Возвращает (path, is_video) или (None, False)."""
     if message.photo:
         f = await bot.get_file(message.photo[-1].file_id)
         p = f"temp_{user_id}.jpg"
@@ -728,6 +732,7 @@ async def handle_text(message: types.Message):
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('template_'))
 async def process_template_callback(cb: types.CallbackQuery):
     user_id = cb.from_user.id
+    logging.info(f"🔘 template callback: {cb.data} от {user_id}")
     template = "insta" if cb.data == "template_insta" else "classic"
     await cb.answer()
 
@@ -752,7 +757,6 @@ async def process_template_callback(cb: types.CallbackQuery):
             f"Например: {example}\n\nЕсли не нужно — 'нет' или '-'"
         )
     else:
-        # Инста-дизайн для фото = сразу 2 варианта; для видео = ждём тему
         if user_data[user_id].get("is_video"):
             user_data[user_id]["step"] = "waiting_theme"
             await bot.send_message(
@@ -792,6 +796,7 @@ async def process_template_callback(cb: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('theme_'))
 async def process_theme_callback(cb: types.CallbackQuery):
     user_id = cb.from_user.id
+    logging.info(f"🔘 theme callback: {cb.data} от {user_id}")
     theme = "dark" if cb.data == "theme_dark" else "light"
     await cb.answer()
 
@@ -817,6 +822,7 @@ async def process_theme_callback(cb: types.CallbackQuery):
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('rubric_'))
 async def process_rubric_callback(cb: types.CallbackQuery):
     user_id = cb.from_user.id
+    logging.info(f"🔘 rubric callback: {cb.data} от {user_id}")
     raw = cb.data.replace('rubric_', '')
     rubric = None if raw == 'none' else raw
     await cb.answer()
@@ -853,6 +859,7 @@ async def process_rubric_callback(cb: types.CallbackQuery):
                 generate_video_story,
                 photo_path, title, content, rubric, highlight_words, theme, out_path
             )
+            logging.info(f"📤 Отправляю видео: {out_path}")
             with open(out_path, 'rb') as f:
                 await bot.send_video(
                     chat_id=user_id,
@@ -860,8 +867,9 @@ async def process_rubric_callback(cb: types.CallbackQuery):
                     duration=VIDEO_MAX_DURATION,
                     caption=f"✅ Готово! ({'🌙' if theme == 'dark' else '☀️'} · {rubric or 'без рубрики'})"
                 )
+            logging.info(f"✅ Видео отправлено пользователю {user_id}")
         except Exception as e:
-            logging.exception("Video generation failed")
+            logging.exception("❌ Video generation failed")
             await bot.send_message(user_id, f"❌ Ошибка видео: {e}")
         finally:
             for p in [photo_path, out_path]:
@@ -873,7 +881,6 @@ async def process_rubric_callback(cb: types.CallbackQuery):
             user_data.pop(user_id, None)
         return
 
-    # фото (классик)
     await bot.send_message(
         user_id,
         f"⏳ Генерирую сторис (🎨 {'тёмная' if theme == 'dark' else 'светлая'}"
@@ -890,13 +897,13 @@ async def process_rubric_callback(cb: types.CallbackQuery):
             except Exception:
                 pass
     except Exception as e:
-        logging.exception("Photo generation failed")
+        logging.exception("❌ Photo generation failed")
         await bot.send_message(user_id, f"❌ Ошибка: {e}")
     finally:
         user_data.pop(user_id, None)
 
 
-# ========== АВТОПОСТИНГ ИЗ КАНАЛА (с поддержкой видео) ==========
+# ========== АВТОПОСТИНГ ИЗ КАНАЛА ==========
 @dp.channel_post_handler(content_types=['photo', 'document', 'video', 'text'])
 async def handle_channel_post(message: types.Message):
     chat_title = message.chat.title or str(message.chat.id)
@@ -962,7 +969,6 @@ async def handle_channel_post(message: types.Message):
         )
 
         if is_video:
-            # Один видео-вариант (классик, тёмная тема по умолчанию)
             out_v = f"ch_video_{message.chat.id}_{message.message_id}.mp4"
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
@@ -970,6 +976,7 @@ async def handle_channel_post(message: types.Message):
                 media_for_gen, title, content, None, [], "dark", out_v
             )
             generated.append(out_v)
+            logging.info(f"📤 Отправляю видео из канала: {out_v}")
             with open(out_v, 'rb') as f:
                 await bot.send_video(
                     chat_id=target_chat,
@@ -977,6 +984,7 @@ async def handle_channel_post(message: types.Message):
                     duration=VIDEO_MAX_DURATION,
                     caption=f"🎬 Видео-сторис (30 сек)\n\n📝 {title[:120]}"
                 )
+            logging.info(f"✅ Видео из канала отправлено в {target_chat}")
         else:
             variants = [
                 ("classic", "light", "🎨 Классик · ☀️ Светлая"),
@@ -1000,7 +1008,7 @@ async def handle_channel_post(message: types.Message):
         logging.info(f"✅ Сторис для «{chat_title}» отправлены в {target_chat}")
 
     except Exception as e:
-        logging.exception("Channel post processing failed")
+        logging.exception("❌ Channel post processing failed")
         try:
             await bot.send_message(target_chat, f"❌ Ошибка: {e}")
         except Exception:
@@ -1017,6 +1025,7 @@ async def handle_channel_post(message: types.Message):
 
 # ========== ЗАПУСК ==========
 async def on_startup(dp):
+    print(f"🚀 BOT VERSION: {BOT_VERSION}")
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         print("✅ Вебхук удалён")
@@ -1041,12 +1050,17 @@ async def on_shutdown(dp):
 
 if __name__ == "__main__":
     from aiogram import executor
-    print("🚀 Бот запускается...")
+    print(f"🚀 Бот запускается... VERSION: {BOT_VERSION}")
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
-            executor.start_polling(dp, skip_updates=True,
-                                   on_startup=on_startup, on_shutdown=on_shutdown)
+            executor.start_polling(
+                dp,
+                skip_updates=True,
+                allowed_updates=['message', 'callback_query', 'channel_post'],
+                on_startup=on_startup,
+                on_shutdown=on_shutdown,
+            )
             break
         except TerminatedByOtherGetUpdates:
             print(f"⚠️ Конфликт getUpdates ({attempt}/{max_attempts}), ждём 5 сек...")
