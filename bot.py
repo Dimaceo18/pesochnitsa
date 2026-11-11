@@ -3,19 +3,19 @@ import logging
 import re
 import random
 import asyncio
+import subprocess
 import unicodedata
-from PIL import Image, ImageDraw, ImageFont, ImageFilter, ImageEnhance
+from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.exceptions import TerminatedByOtherGetUpdates
 import textwrap
-import io
 
 # ========== КОНФИГ ==========
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
-    raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN в настройках Render.")
+    raise ValueError("❌ Токен не найден! Создай переменную BOT_TOKEN.")
 
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
 if ADMIN_CHAT_ID:
@@ -23,22 +23,17 @@ if ADMIN_CHAT_ID:
         ADMIN_CHAT_ID = int(ADMIN_CHAT_ID)
     except ValueError:
         ADMIN_CHAT_ID = None
-        logging.warning("⚠️ ADMIN_CHAT_ID должен быть числом — сторис будут уходить в канал")
+        logging.warning("⚠️ ADMIN_CHAT_ID должен быть числом")
 else:
-    logging.warning("⚠️ ADMIN_CHAT_ID не задан — сторис будут уходить в канал")
+    logging.warning("⚠️ ADMIN_CHAT_ID не задан")
 
 FONT_PATHS = [
-    "Inter-Black.ttf",
-    "Inter-Bold.ttf",
-    "Inter-Regular.ttf",
-    "Inter-Medium.ttf",
+    "Inter-Black.ttf", "Inter-Bold.ttf", "Inter-Regular.ttf", "Inter-Medium.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
     "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-    "/System/Library/Fonts/Helvetica.ttc",
     "arial.ttf"
 ]
 
-# ========== КЛАССИЧЕСКИЙ ШАБЛОН (1080x1920) ==========
 W, H = 1080, 1920
 PHOTO_TOP = 0
 PHOTO_HEIGHT = 900
@@ -53,28 +48,24 @@ RUBRIC_PADDING_Y = 12
 TITLE_TOP = PHOTO_TOP + PHOTO_HEIGHT + 90
 TITLE_MAX_WIDTH = W - 100
 TITLE_LINE_SPACING = 12
-LINE_TOP_OFFSET = 30          # было 27 — линия на 3 px ниже
+LINE_TOP_OFFSET = 30
 LINE_HEIGHT = 8
 TEXT_TOP_OFFSET = 15
 
-# ========== ИНСТА-ШАБЛОН (720x1280) ==========
+# Инста-шаблон
 IW, IH = 720, 1280
-
 I_PHOTO_TOP = 0
 I_PHOTO_HEIGHT = 520
 I_PHOTO_WIDTH = IW
 I_PHOTO_LEFT = 0
-
 I_MARGIN_X = 32
 I_TITLE_TOP = I_PHOTO_HEIGHT + 28
-
 I_TITLE_FONT_MAX = 54
 I_TITLE_FONT_MIN = 20
 I_TITLE_PLATE_PAD_X = 18
 I_TITLE_PLATE_PAD_Y = 10
 I_TITLE_PLATE_RADIUS = 16
 I_TITLE_LINE_GAP = -1
-
 I_TEXT_TOP_GAP = 24
 I_TEXT_FONT_MAX = 30
 I_TEXT_FONT_MIN = 16
@@ -84,33 +75,37 @@ I_TEXT_PARA_GAP = 16
 RUBRICS = ["НОВОСТИ", "АФИША", "СПОРТ", "ФИНАНСЫ", "АВТО", "НЕДВИЖИМОСТЬ"]
 
 logging.basicConfig(level=logging.INFO)
-
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
+VIDEO_MAX_DURATION = 30
+
+
+# ========== УТИЛИТЫ ==========
 def load_font(size, weight='regular'):
     font_names = {
-        'black':     ["Inter-Black.ttf"] + FONT_PATHS,
-        'bold':      ["Inter-Bold.ttf", "Inter-Black.ttf"] + FONT_PATHS,
+        'black': ["Inter-Black.ttf"] + FONT_PATHS,
+        'bold': ["Inter-Bold.ttf", "Inter-Black.ttf"] + FONT_PATHS,
         'bold_text': ["Inter-Bold.ttf", "Inter-Black.ttf"] + FONT_PATHS,
-        'medium':    [FONT_PATHS[3], FONT_PATHS[1], FONT_PATHS[5]],
-        'regular':   ["Inter-Regular.ttf", "Inter-Bold.ttf"] + FONT_PATHS[4:]
+        'medium': [FONT_PATHS[3], FONT_PATHS[1], FONT_PATHS[5]],
+        'regular': ["Inter-Regular.ttf", "Inter-Bold.ttf"] + FONT_PATHS[4:]
     }
     paths = font_names.get(weight, ["Inter-Regular.ttf", "Inter-Bold.ttf"] + FONT_PATHS[4:])
     for path in paths:
         try:
             if os.path.exists(path):
                 return ImageFont.truetype(path, size)
-        except:
+        except Exception:
             continue
-    logging.warning(f"⚠️ Шрифт не найден (weight={weight}, size={size}), используется дефолтный")
+    logging.warning(f"⚠️ Шрифт не найден (weight={weight}, size={size})")
     return ImageFont.load_default()
+
 
 def remove_emojis(text: str) -> str:
     if not text:
         return text
-    cleaned_chars = []
+    out = []
     for ch in text:
         code = ord(ch)
         if (0x1F300 <= code <= 0x1FAFF or 0x1F000 <= code <= 0x1F2FF or
@@ -120,100 +115,71 @@ def remove_emojis(text: str) -> str:
             continue
         if unicodedata.category(ch) == 'So':
             continue
-        cleaned_chars.append(ch)
-    cleaned = ''.join(cleaned_chars)
+        out.append(ch)
+    cleaned = ''.join(out)
     cleaned = re.sub(r'\s+([,.!?;:…»)])', r'\1', cleaned)
     cleaned = re.sub(r'[ \t]{2,}', ' ', cleaned)
     cleaned = '\n'.join(line.strip() for line in cleaned.split('\n'))
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
 
-def parse_text(text: str) -> tuple:
+
+def parse_text(text: str):
     if not text:
         return "", ""
     text = text.strip()
-    paragraphs = re.split(r'\n\s*\n', text)
-    paragraphs = [p.strip() for p in paragraphs if p.strip()]
-
+    paragraphs = [p.strip() for p in re.split(r'\n\s*\n', text) if p.strip()]
     if len(paragraphs) > 1:
-        title = paragraphs[0]
-        content = "\n\n".join(paragraphs[1:])
-    else:
-        lines = text.split('\n')
-        lines = [l.strip() for l in lines if l.strip()]
-        if len(lines) > 1:
-            title = lines[0]
-            content = '\n\n'.join(lines[1:])
-        else:
-            match = re.search(r'\.\s+([А-ЯA-Z])', text)
-            if match:
-                cut_pos = match.start() + 1
-                title = text[:cut_pos].strip()
-                content = text[cut_pos:].strip()
-            else:
-                match = re.search(r'[?!]\s+([А-ЯA-Z])', text)
-                if match:
-                    cut_pos = match.start() + 1
-                    title = text[:cut_pos].strip()
-                    content = text[cut_pos:].strip()
-                else:
-                    title = text
-                    content = ""
+        return paragraphs[0], "\n\n".join(paragraphs[1:])
+    lines = [l.strip() for l in text.split('\n') if l.strip()]
+    if len(lines) > 1:
+        return lines[0], '\n\n'.join(lines[1:])
+    for pattern in (r'\.\s+([А-ЯA-Z])', r'[?!]\s+([А-ЯA-Z])'):
+        m = re.search(pattern, text)
+        if m:
+            cut = m.start() + 1
+            return text[:cut].strip(), text[cut:].strip()
+    return text, ""
 
-    if len(title) > 150:
-        last_dot = title.rfind('.', 0, 150)
-        last_q = title.rfind('?', 0, 150)
-        last_excl = title.rfind('!', 0, 150)
-        cut_pos = max(last_dot, last_q, last_excl)
-        if cut_pos > 0:
-            remaining = title[cut_pos+1:].strip()
-            title = title[:cut_pos+1].strip()
-            if remaining:
-                content = remaining + "\n\n" + content if content else remaining
-        else:
-            title = title[:147] + "..."
-    return title, content
 
 def apply_photo_effect(image: Image.Image) -> Image.Image:
     if image.mode != 'RGB':
         image = image.convert('RGB')
-    enhancer = ImageEnhance.Color(image)
-    image = enhancer.enhance(1.05)
-    pixel_data = list(image.getdata())
-    width, height = image.size
-    noise_intensity = 12
-    noisy_pixels = []
-    for pixel in pixel_data:
-        r, g, b = pixel
-        r = max(0, min(255, r + random.randint(-noise_intensity, noise_intensity)))
-        g = max(0, min(255, g + random.randint(-noise_intensity, noise_intensity)))
-        b = max(0, min(255, b + random.randint(-noise_intensity, noise_intensity)))
-        noisy_pixels.append((r, g, b))
-    noisy_image = Image.new('RGB', (width, height))
-    noisy_image.putdata(noisy_pixels)
-    return noisy_image
+    image = ImageEnhance.Color(image).enhance(1.05)
+    pixels = list(image.getdata())
+    noisy = []
+    for (r, g, b) in pixels:
+        noisy.append((
+            max(0, min(255, r + random.randint(-12, 12))),
+            max(0, min(255, g + random.randint(-12, 12))),
+            max(0, min(255, b + random.randint(-12, 12))),
+        ))
+    out = Image.new('RGB', image.size)
+    out.putdata(noisy)
+    return out
 
-def fit_photo(photo: Image.Image, target_w: int, target_h: int) -> Image.Image:
-    photo_ratio = photo.width / photo.height
-    target_ratio = target_w / target_h
-    if photo_ratio > target_ratio:
-        new_height = target_h
-        new_width = int(new_height * photo_ratio)
-        photo = photo.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        left = (new_width - target_w) // 2
-        photo = photo.crop((left, 0, left + target_w, new_height))
-    else:
-        new_width = target_w
-        new_height = int(new_width / photo_ratio)
-        photo = photo.resize((new_width, new_height), Image.Resampling.LANCZOS)
-        top = (new_height - target_h) // 2
-        photo = photo.crop((0, top, new_width, top + target_h))
-    return photo
 
-# ========== ГЕНЕРАЦИЯ: КЛАССИЧЕСКИЙ ШАБЛОН ==========
-async def generate_story_classic(photo_path: str, title: str, content: str, rubric: str,
-                                 highlight_words: list, theme: str = "light") -> str:
-    logging.info(f"🖼 [classic] тема: {theme}, рубрика: {rubric or 'БЕЗ'}")
+def fit_photo(photo: Image.Image, tw: int, th: int) -> Image.Image:
+    pr = photo.width / photo.height
+    tr = tw / th
+    if pr > tr:
+        nh = th
+        nw = int(nh * pr)
+        photo = photo.resize((nw, nh), Image.Resampling.LANCZOS)
+        left = (nw - tw) // 2
+        return photo.crop((left, 0, left + tw, nh))
+    nw = tw
+    nh = int(nw / pr)
+    photo = photo.resize((nw, nh), Image.Resampling.LANCZOS)
+    top = (nh - th) // 2
+    return photo.crop((0, top, nw, top + th))
+
+
+# ========== РЕНДЕР СТАТИЧНОГО СЛОЯ (фото ИЛИ прозрачный верх для видео) ==========
+def render_base_canvas(title, content, rubric, highlight_words, theme, photo_path=None, transparent_top=False):
+    """Возвращает PIL.Image 1080×1920.
+    Если transparent_top=True — верхняя зона (0..900) полностью прозрачна (RGBA),
+    туда будет наложено видео через FFmpeg."""
     is_dark = (theme == "dark")
     bg_color = 'black' if is_dark else 'white'
     text_color = 'white' if is_dark else 'black'
@@ -221,29 +187,30 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
     placeholder_outline = '#333333' if is_dark else '#cccccc'
     placeholder_text = '#666666' if is_dark else '#999999'
 
-    canvas = Image.new('RGB', (W, H), color=bg_color)
+    mode = 'RGBA' if transparent_top else 'RGB'
+    canvas = Image.new(mode, (W, H), (0, 0, 0, 0) if transparent_top else bg_color)
     draw = ImageDraw.Draw(canvas)
 
-    try:
-        if os.path.exists(photo_path):
-            photo = Image.open(photo_path).convert("RGB")
-            photo = fit_photo(photo, PHOTO_WIDTH, PHOTO_HEIGHT)
-            photo = apply_photo_effect(photo)
-            canvas.paste(photo, (PHOTO_LEFT, PHOTO_TOP))
-        else:
-            raise FileNotFoundError(photo_path)
-    except Exception as e:
-        logging.error(f"❌ Фото: {e}")
-        draw.rectangle([PHOTO_LEFT, PHOTO_TOP, PHOTO_LEFT + PHOTO_WIDTH, PHOTO_TOP + PHOTO_HEIGHT],
-                      fill=placeholder_bg, outline=placeholder_outline, width=2)
-        draw.text((W//2 - 60, PHOTO_TOP + PHOTO_HEIGHT//2 - 10),
-                 "📷 ФОТО", font=load_font(36, 'bold'), fill=placeholder_text)
+    if not transparent_top:
+        try:
+            if photo_path and os.path.exists(photo_path):
+                photo = Image.open(photo_path).convert("RGB")
+                photo = fit_photo(photo, PHOTO_WIDTH, PHOTO_HEIGHT)
+                photo = apply_photo_effect(photo)
+                canvas.paste(photo, (PHOTO_LEFT, PHOTO_TOP))
+            else:
+                raise FileNotFoundError(photo_path)
+        except Exception as e:
+            logging.error(f"❌ Фото: {e}")
+            draw.rectangle([PHOTO_LEFT, PHOTO_TOP, PHOTO_LEFT + PHOTO_WIDTH, PHOTO_TOP + PHOTO_HEIGHT],
+                           fill=placeholder_bg, outline=placeholder_outline, width=2)
+            draw.text((W // 2 - 60, PHOTO_TOP + PHOTO_HEIGHT // 2 - 10),
+                      "📷 ФОТО", font=load_font(36, 'bold'), fill=placeholder_text)
 
     if rubric:
         rf = load_font(34, 'bold')
         rb = draw.textbbox((0, 0), rubric, font=rf)
-        rw = rb[2] - rb[0]
-        rh = rb[3] - rb[1]
+        rw, rh = rb[2] - rb[0], rb[3] - rb[1]
         x1, y1 = RUBRIC_LEFT, RUBRIC_TOP
         x2 = x1 + rw + RUBRIC_PADDING_X * 2
         y2 = y1 + rh + RUBRIC_PADDING_Y * 2
@@ -266,9 +233,11 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
             if bb[2] - bb[0] <= TITLE_MAX_WIDTH:
                 cur.append(word)
             else:
-                if cur: lines.append(' '.join(cur))
+                if cur:
+                    lines.append(' '.join(cur))
                 cur = [word]
-        if cur: lines.append(' '.join(cur))
+        if cur:
+            lines.append(' '.join(cur))
         if lines:
             lb = draw.textbbox((0, 0), "A", font=tf)
             lh = lb[3] - lb[1]
@@ -287,9 +256,11 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
             if bb[2] - bb[0] <= TITLE_MAX_WIDTH:
                 cur.append(word)
             else:
-                if cur: lines.append(' '.join(cur))
+                if cur:
+                    lines.append(' '.join(cur))
                 cur = [word]
-        if cur: lines.append(' '.join(cur))
+        if cur:
+            lines.append(' '.join(cur))
         title_lines = lines
         title_font_size = 32
 
@@ -344,8 +315,7 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
         sh = sb[3] - sb[1]
         for para in paragraphs:
             cpl = int((W - 100) / (20 * 0.6))
-            w = textwrap.wrap(para, width=cpl) or [para]
-            wrapped_paragraphs.append(w)
+            wrapped_paragraphs.append(textwrap.wrap(para, width=cpl) or [para])
         text_font_size = 20
 
     text_font = load_font(text_font_size, 'regular')
@@ -358,33 +328,32 @@ async def generate_story_classic(photo_path: str, title: str, content: str, rubr
             pos_y += sh + 8
         pos_y += 18
 
-    output_path = f"output_story_classic_{theme}.png"
-    canvas.save(output_path, format='PNG')
-    return output_path
+    return canvas
 
-# ========== ГЕНЕРАЦИЯ: ИНСТА-ШАБЛОН ==========
+
+# ========== СТАТИЧНЫЕ ГЕНЕРАТОРЫ ==========
+async def generate_story_classic(photo_path, title, content, rubric, highlight_words, theme="light"):
+    canvas = render_base_canvas(title, content, rubric, highlight_words, theme, photo_path)
+    out = f"output_story_classic_{theme}.png"
+    canvas.save(out, format='PNG')
+    return out
+
+
 def draw_rounded_rect_highres(draw, box, radius, fill):
     x1, y1, x2, y2 = box
     r = min(radius, (x2 - x1) // 2, (y2 - y1) // 2)
     if r <= 0:
         draw.rectangle(box, fill=fill)
         return
-
     scale = 4
-    width = (x2 - x1) * scale
-    height = (y2 - y1) * scale
+    width, height = (x2 - x1) * scale, (y2 - y1) * scale
     if width <= 0 or height <= 0:
         return
-
     temp = Image.new('RGBA', (width, height), (0, 0, 0, 0))
-    temp_draw = ImageDraw.Draw(temp)
-    temp_draw.rounded_rectangle(
-        [0, 0, width - 1, height - 1],
-        radius=r * scale,
-        fill=fill
-    )
+    ImageDraw.Draw(temp).rounded_rectangle([0, 0, width - 1, height - 1], radius=r * scale, fill=fill)
     temp = temp.resize((x2 - x1, y2 - y1), Image.Resampling.LANCZOS)
     draw._image.paste(temp, (x1, y1), temp)
+
 
 def wrap_title_by_width(draw, text, font, max_width):
     words = text.upper().split()
@@ -402,6 +371,7 @@ def wrap_title_by_width(draw, text, font, max_width):
         lines.append(' '.join(cur))
     return lines
 
+
 def wrap_text_strict(draw, text, font, max_width):
     words = text.split()
     lines, cur = [], []
@@ -418,31 +388,20 @@ def wrap_text_strict(draw, text, font, max_width):
         lines.append(' '.join(cur))
     return lines
 
-async def generate_story_insta(photo_path: str, title: str, content: str, theme: str = "dark") -> str:
-    logging.info(f"🖼 [insta] генерация (тема: {theme})")
 
+async def generate_story_insta(photo_path, title, content, theme="dark"):
     if theme == "dark":
-        bg_color = 'black'
-        text_color = 'white'
-        plate_color = 'white'
-        title_text_color = 'black'
-        placeholder_bg = '#111111'
-        placeholder_outline = '#333333'
-        placeholder_text = '#666666'
+        bg_color, text_color, plate_color, title_text_color = 'black', 'white', 'white', 'black'
+        placeholder_bg, placeholder_outline, placeholder_text = '#111111', '#333333', '#666666'
     else:
-        bg_color = 'white'
-        text_color = 'black'
-        plate_color = 'black'
-        title_text_color = 'white'
-        placeholder_bg = '#f0f0f0'
-        placeholder_outline = '#cccccc'
-        placeholder_text = '#999999'
+        bg_color, text_color, plate_color, title_text_color = 'white', 'black', 'black', 'white'
+        placeholder_bg, placeholder_outline, placeholder_text = '#f0f0f0', '#cccccc', '#999999'
 
     canvas = Image.new('RGB', (IW, IH), color=bg_color)
     draw = ImageDraw.Draw(canvas)
 
     try:
-        if os.path.exists(photo_path):
+        if photo_path and os.path.exists(photo_path):
             photo = Image.open(photo_path).convert("RGB")
             photo = fit_photo(photo, I_PHOTO_WIDTH, I_PHOTO_HEIGHT)
             photo = apply_photo_effect(photo)
@@ -452,33 +411,25 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     except Exception as e:
         logging.error(f"❌ Фото: {e}")
         draw.rectangle([I_PHOTO_LEFT, I_PHOTO_TOP, I_PHOTO_LEFT + I_PHOTO_WIDTH, I_PHOTO_TOP + I_PHOTO_HEIGHT],
-                      fill=placeholder_bg, outline=placeholder_outline, width=2)
-        draw.text((IW // 2 - 50, I_PHOTO_HEIGHT // 2 - 10),
-                 "📷 ФОТО", font=load_font(28, 'black'), fill=placeholder_text)
+                       fill=placeholder_bg, outline=placeholder_outline, width=2)
+        draw.text((IW // 2 - 50, I_PHOTO_HEIGHT // 2 - 10), "📷 ФОТО",
+                  font=load_font(28, 'black'), fill=placeholder_text)
 
     max_width = IW - 2 * I_MARGIN_X
-
     title_words_count = len(title.upper().split())
     max_lines_allowed = 3 if title_words_count <= 9 else 4
 
-    title_font_size = I_TITLE_FONT_MAX
-    title_lines = []
-
-    # === ЗАГОЛОВОК: Inter-Black ===
+    title_font_size, title_lines = I_TITLE_FONT_MAX, []
     for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
         tf = load_font(size, 'black')
         lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
-
         lb = draw.textbbox((0, 0), "A", font=tf)
         lh = lb[3] - lb[1]
         plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
         total_h = len(lines) * plate_h + (len(lines) - 1) * I_TITLE_LINE_GAP
-
         if len(lines) <= max_lines_allowed and total_h <= 300:
-            title_font_size = size
-            title_lines = lines
+            title_font_size, title_lines = size, lines
             break
-
     if not title_lines:
         tf = load_font(I_TITLE_FONT_MIN, 'black')
         title_lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
@@ -488,7 +439,6 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     lb = draw.textbbox((0, 0), "A", font=title_font)
     lh = lb[3] - lb[1]
     plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
-
     cur_y = I_TITLE_TOP
     max_plate_w = 0
 
@@ -497,26 +447,14 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
         line_w = wb[2] - wb[0]
         plate_w = line_w + 2 * I_TITLE_PLATE_PAD_X
         max_plate_w = max(max_plate_w, plate_w)
-
-        x1 = I_MARGIN_X
-        y1 = cur_y
-        x2 = x1 + plate_w
-        y2 = y1 + plate_h
-
+        x1, y1 = I_MARGIN_X, cur_y
+        x2, y2 = x1 + plate_w, y1 + plate_h
         draw_rounded_rect_highres(draw, [x1, y1, x2, y2], I_TITLE_PLATE_RADIUS, plate_color)
-
-        center_x = x1 + plate_w / 2
-        center_y = y1 + plate_h / 2
-        draw.text((center_x, center_y), line, font=title_font, fill=title_text_color, anchor="mm")
-
+        draw.text((x1 + plate_w / 2, y1 + plate_h / 2), line, font=title_font, fill=title_text_color, anchor="mm")
         cur_y = y2 + I_TITLE_LINE_GAP
 
-    # ==========================================
-    # ОСНОВНОЙ ТЕКСТ (Inter-Bold)
-    # ==========================================
     text_y = cur_y + I_TEXT_TOP_GAP
     available_h = IH - text_y - 24
-
     text_line_max_width = max_plate_w - 4
 
     if content and content != "Текст отсутствует":
@@ -524,38 +462,28 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
     else:
         paragraphs = ["Текст отсутствует"]
 
-    text_font_size = I_TEXT_FONT_MAX
-    wrapped_paragraphs = []
-
+    text_font_size, wrapped_paragraphs = I_TEXT_FONT_MAX, []
     for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
         tf = load_font(size, 'bold_text')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
-
-        total_h = 0
-        tmp_paragraphs = []
-
+        total_h, tmp = 0, []
         for para in paragraphs:
             lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
-            tmp_paragraphs.append(lines)
+            tmp.append(lines)
             total_h += len(lines) * (sh + I_TEXT_LINE_GAP) + I_TEXT_PARA_GAP
-
         if total_h <= available_h:
-            text_font_size = size
-            wrapped_paragraphs = tmp_paragraphs
+            text_font_size, wrapped_paragraphs = size, tmp
             break
-
     if not wrapped_paragraphs:
         tf = load_font(I_TEXT_FONT_MIN, 'bold_text')
         for para in paragraphs:
-            lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
-            wrapped_paragraphs.append(lines)
+            wrapped_paragraphs.append(wrap_text_strict(draw, para.upper(), tf, text_line_max_width))
         text_font_size = I_TEXT_FONT_MIN
 
     text_font = load_font(text_font_size, 'bold_text')
     sb = draw.textbbox((0, 0), "A", font=text_font)
     sh = sb[3] - sb[1]
-
     pos_y = text_y
     for para_lines in wrapped_paragraphs:
         for line in para_lines:
@@ -563,38 +491,60 @@ async def generate_story_insta(photo_path: str, title: str, content: str, theme:
             pos_y += sh + I_TEXT_LINE_GAP
         pos_y += I_TEXT_PARA_GAP
 
-    output_path = f"output_story_insta_{theme}.png"
-    canvas.save(output_path, format='PNG')
-    return output_path
+    out = f"output_story_insta_{theme}.png"
+    canvas.save(out, format='PNG')
+    return out
 
-# ========== ДИСПЕТЧЕР ГЕНЕРАЦИИ ==========
-async def generate_story(photo_path: str, title: str, content: str, rubric: str,
-                         highlight_words: list, theme: str = "light",
-                         template: str = "classic") -> str:
-    if template == "insta":
-        return await generate_story_insta(photo_path, title, content, theme)
-    return await generate_story_classic(photo_path, title, content, rubric, highlight_words, theme)
 
-# ========== ОБЩАЯ ФУНКЦИЯ ==========
-async def process_story(user_id: int, photo_path: str, title: str, content: str,
-                        rubric: str, highlight_words: list, message: types.Message,
-                        theme: str = "light", template: str = "classic"):
+# ========== ВИДЕО-СТОРИС ==========
+def generate_video_story(video_path, title, content, rubric, highlight_words, theme, out_path):
+    """Собирает MP4: верхняя зона (0..900) — видео (обрезано до 30 сек),
+    нижняя часть — статичный текст."""
+    # 1. Статичная подложка с прозрачным верхом
+    base = render_base_canvas(
+        title, content, rubric, highlight_words, theme,
+        photo_path=None, transparent_top=True
+    )
+    base_path = f"base_{os.path.basename(out_path)}.png"
+    base.save(base_path, format='PNG')
+
+    # 2. FFmpeg: видео → 1080×900, обрезать до 30 сек, наложить на подложку
+    filter_complex = (
+        f"[0:v]trim=0:{VIDEO_MAX_DURATION},setpts=PTS-STARTPTS,"
+        f"scale={PHOTO_WIDTH}:{PHOTO_HEIGHT}:force_original_aspect_ratio=increase,"
+        f"crop={PHOTO_WIDTH}:{PHOTO_HEIGHT},setsar=1,fps=30[v];"
+        f"[1:v][v]overlay=0:0:shortest=0[outv]"
+    )
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", video_path,
+        "-loop", "1", "-i", base_path,
+        "-filter_complex", filter_complex,
+        "-map", "[outv]",
+        "-map", "0:a?",
+        "-t", str(VIDEO_MAX_DURATION),
+        "-c:v", "libx264",
+        "-pix_fmt", "yuv420p",
+        "-preset", "veryfast",
+        "-crf", "23",
+        "-c:a", "aac",
+        "-b:a", "128k",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+
+    logging.info(f"🎬 FFmpeg: {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
     try:
-        output = await generate_story(photo_path, title, content, rubric,
-                                      highlight_words, theme, template)
-        with open(output, 'rb') as photo_file:
-            await bot.send_photo(chat_id=user_id, photo=photo_file, caption="✅ Готово! 🎞️")
-        for file_path in [photo_path, output]:
-            try:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-            except Exception as e:
-                logging.warning(f"⚠️ Не удалось удалить {file_path}: {e}")
-        return True
-    except Exception as e:
-        logging.error(f"❌ Ошибка: {str(e)}")
-        await bot.send_message(user_id, f"❌ Ошибка: {str(e)}")
-        return False
+        os.remove(base_path)
+    except Exception:
+        pass
+    if result.returncode != 0:
+        logging.error(f"❌ FFmpeg stderr: {result.stderr}")
+        raise RuntimeError(f"FFmpeg failed: {result.stderr[-500:]}")
+    return out_path
+
 
 # ========== КЛАВИАТУРЫ ==========
 def get_template_keyboard():
@@ -605,6 +555,7 @@ def get_template_keyboard():
     )
     return kb
 
+
 def get_theme_keyboard():
     kb = InlineKeyboardMarkup(row_width=2)
     kb.add(
@@ -613,6 +564,7 @@ def get_theme_keyboard():
     )
     return kb
 
+
 def get_rubric_keyboard():
     kb = InlineKeyboardMarkup(row_width=3)
     buttons = [InlineKeyboardButton(r, callback_data=f"rubric_{r}") for r in RUBRICS]
@@ -620,127 +572,115 @@ def get_rubric_keyboard():
     kb.add(*buttons)
     return kb
 
-# ========== ВСПОМОГАТЕЛЬНОЕ ==========
+
 async def safe_remove_keyboard(message: types.Message):
     try:
         await message.edit_reply_markup(reply_markup=None)
     except Exception:
         pass
 
-# ========== ХЕНДЛЕРЫ ==========
+
+# ========== СОСТОЯНИЕ ==========
 user_data = {}
 
+
+# ========== ХЕНДЛЕРЫ ==========
 @dp.message_handler(commands=['start'])
 async def start(message: types.Message):
     user_id = message.from_user.id
-    logging.info(f"👤 /start от user_id={user_id}, username=@{message.from_user.username}")
     user_data[user_id] = {"step": "waiting_photo"}
     await bot.send_message(
         user_id,
-        f"📱 Привет! Я делаю стильные сторис!\n\n"
-        f"🆔 Твой user_id: <code>{user_id}</code>\n"
-        f"(пригодится для ADMIN_CHAT_ID)\n\n"
-        f"Отправь мне РЕПОСТ любого поста с фото и текстом.\n"
-        f"Дальше — шаблон, тема, рубрика и выделение слов (если нужно).\n\n"
-        f"📢 Также я автоматически присылаю сюда 4 варианта сторис "
-        f"(классик светлая/тёмная + инста светлая/тёмная), "
-        f"когда в канале (где я админ) выходит новый пост.",
+        f"📱 Привет! Я делаю стильные сторис (фото или видео)!\n\n"
+        f"🆔 Твой user_id: <code>{user_id}</code>\n\n"
+        f"Отправь РЕПОСТ поста с фото/видео и текстом — или фото/видео + подпись.\n"
+        f"Видео будет обрезано до {VIDEO_MAX_DURATION} сек и вставлено сверху.",
         parse_mode="HTML"
     )
 
-@dp.message_handler(content_types=['photo', 'document'])
-async def handle_photo_or_document(message: types.Message):
+
+async def _download_media(message: types.Message, user_id: int):
+    """Скачивает фото/документ-картинку/видео. Возвращает (path, is_video) или (None, False)."""
+    if message.photo:
+        f = await bot.get_file(message.photo[-1].file_id)
+        p = f"temp_{user_id}.jpg"
+        await bot.download_file(f.file_path, p)
+        return p, False
+    if message.document and message.document.mime_type:
+        mt = message.document.mime_type
+        if mt.startswith('image/'):
+            f = await bot.get_file(message.document.file_id)
+            p = f"temp_{user_id}.jpg"
+            await bot.download_file(f.file_path, p)
+            return p, False
+        if mt.startswith('video/'):
+            f = await bot.get_file(message.document.file_id)
+            p = f"temp_{user_id}.mp4"
+            await bot.download_file(f.file_path, p)
+            return p, True
+    if message.video:
+        f = await bot.get_file(message.video.file_id)
+        p = f"temp_{user_id}.mp4"
+        await bot.download_file(f.file_path, p)
+        return p, True
+    return None, False
+
+
+@dp.message_handler(content_types=['photo', 'document', 'video'])
+async def handle_media(message: types.Message):
     user_id = message.from_user.id
     is_forward = message.forward_from or message.forward_from_chat or message.forward_date
 
     if is_forward:
         await bot.send_message(user_id, "📥 Обнаружен репост! Обрабатываю...")
 
-        text = message.text or message.caption or ""
-        photo_file_path = None
+    media_path, is_video = await _download_media(message, user_id)
+    if not media_path:
+        await bot.send_message(user_id, "❌ Не удалось получить медиа.")
+        return
 
-        if message.photo:
-            file = await bot.get_file(message.photo[-1].file_id)
-            photo_file_path = f"temp_{user_id}_forward.jpg"
-            await bot.download_file(file.file_path, photo_file_path)
-        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
-            file = await bot.get_file(message.document.file_id)
-            photo_file_path = f"temp_{user_id}_forward.jpg"
-            await bot.download_file(file.file_path, photo_file_path)
-        else:
-            await bot.send_message(user_id, "❌ В репосте нет фото!")
-            return
+    text = message.text or message.caption or ""
+    text = remove_emojis(text)
+    text = text.replace("**Текст отсутствует**", "").strip()
+    lines = text.split('\n')
+    clean = [l.strip() for l in lines
+             if l.strip() and not l.strip().startswith(('Подписаться', '@', '#'))]
+    text = '\n'.join(clean)
 
-        text = text.replace("**Текст отсутствует**", "").strip()
-        lines = text.split('\n')
-        clean_lines = []
-        for line in lines:
-            line = line.strip()
-            if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
-                clean_lines.append(line)
-        text = '\n'.join(clean_lines)
-        text = remove_emojis(text)
-
+    if text:
         title, content = parse_text(text)
-        if not title and text:
-            sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-            if sentences:
-                title = sentences[0]
-                content = ". ".join(sentences[1:])
         if not title:
-            title = "ЗДЕСЬ БУДЕТ ЗАГОЛОВОК ВАШЕЙ НОВОСТИ"
+            sentences = re.split(r'(?<=[.!?])\s+', text.strip())
+            title = sentences[0] if sentences else "ЗАГОЛОВОК"
+            content = ". ".join(sentences[1:]) if len(sentences) > 1 else "Текст отсутствует"
         if not content:
             content = "Текст отсутствует"
 
         user_data[user_id] = {
-            "photo": photo_file_path,
+            "photo": media_path,
+            "is_video": is_video,
             "title": title,
             "content": content,
             "highlight_words": [],
             "step": "waiting_template"
         }
-
         await bot.send_message(
             user_id,
-            f"📝 Заголовок:\n{title}\n\n"
-            f"🖼 Выберите шаблон оформления:",
+            f"📝 Заголовок:\n{title}\n\n🖼 Выберите шаблон:",
             reply_markup=get_template_keyboard()
         )
         return
 
-    if user_id not in user_data:
-        user_data[user_id] = {"step": "waiting_photo"}
+    user_data[user_id] = {
+        "photo": media_path,
+        "is_video": is_video,
+        "title": None,
+        "content": None,
+        "highlight_words": [],
+        "step": "waiting_title"
+    }
+    await bot.send_message(user_id, "✅ Медиа принято! Теперь отправь ЗАГОЛОВОК.")
 
-    caption = message.caption or ""
-    if caption:
-        caption = remove_emojis(caption)
-        title, content = parse_text(caption)
-        file = await bot.get_file(message.photo[-1].file_id)
-        file_path = f"temp_{user_id}.jpg"
-        await bot.download_file(file.file_path, file_path)
-
-        user_data[user_id] = {
-            "photo": file_path,
-            "title": title,
-            "content": content,
-            "highlight_words": [],
-            "step": "waiting_template"
-        }
-
-        await bot.send_message(
-            user_id,
-            f"📝 Заголовок:\n{title}\n\n"
-            f"🖼 Выберите шаблон оформления:",
-            reply_markup=get_template_keyboard()
-        )
-        return
-
-    file = await bot.get_file(message.photo[-1].file_id)
-    file_path = f"temp_{user_id}.jpg"
-    await bot.download_file(file.file_path, file_path)
-    user_data[user_id]["photo"] = file_path
-    user_data[user_id]["step"] = "waiting_title"
-    await bot.send_message(user_id, "✅ Фото принято! Теперь отправь ЗАГОЛОВОК.")
 
 @dp.message_handler(content_types=['text'])
 async def handle_text(message: types.Message):
@@ -756,18 +696,14 @@ async def handle_text(message: types.Message):
     if step == "waiting_title":
         user_data[user_id]["title"] = remove_emojis(message.text)
         user_data[user_id]["step"] = "waiting_content"
-        await bot.send_message(user_id, "✅ Заголовок сохранен! Теперь отправь ОСНОВНОЙ ТЕКСТ.")
+        await bot.send_message(user_id, "✅ Заголовок сохранён! Теперь ОСНОВНОЙ ТЕКСТ.")
         return
 
     if step == "waiting_content":
         user_data[user_id]["content"] = remove_emojis(message.text)
         user_data[user_id]["step"] = "waiting_template"
-        await bot.send_message(
-            user_id,
-            "✅ Текст сохранен!\n\n"
-            "🖼 Выберите шаблон оформления:",
-            reply_markup=get_template_keyboard()
-        )
+        await bot.send_message(user_id, "✅ Текст сохранён!\n\n🖼 Выберите шаблон:",
+                               reply_markup=get_template_keyboard())
         return
 
     if step == "waiting_highlight_words":
@@ -775,133 +711,125 @@ async def handle_text(message: types.Message):
         if text.lower() in ['нет', '-', 'без', 'none', 'skip', 'не надо']:
             user_data[user_id]["highlight_words"] = []
         else:
-            if ',' in text:
-                words = [w.strip() for w in text.split(',') if w.strip()]
-            else:
-                words = text.split()
-            words = [w for w in words if len(w) > 2]
-            user_data[user_id]["highlight_words"] = words
-
+            parts = text.split(',') if ',' in text else text.split()
+            user_data[user_id]["highlight_words"] = [w.strip() for w in parts if len(w.strip()) > 2]
         user_data[user_id]["step"] = "waiting_theme"
-        hl = f"Выделенные слова: {', '.join(user_data[user_id]['highlight_words']) if user_data[user_id]['highlight_words'] else 'Нет'}"
+        hl = ', '.join(user_data[user_id]['highlight_words']) or 'Нет'
         await bot.send_message(
             user_id,
-            f"✅ Слова сохранены!\n{hl}\n\n"
-            f"🎨 Выберите тему оформления:",
+            f"✅ Слова сохранены!\nВыделенные: {hl}\n\n🎨 Выберите тему:",
             reply_markup=get_theme_keyboard()
         )
         return
 
-    await bot.send_message(user_id, "❓ Я не понял. Отправь /start, чтобы начать заново.")
+    await bot.send_message(user_id, "❓ Не понял. /start чтобы начать заново.")
+
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('template_'))
-async def process_template_callback(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    template = "insta" if callback_query.data == "template_insta" else "classic"
-    await callback_query.answer()
+async def process_template_callback(cb: types.CallbackQuery):
+    user_id = cb.from_user.id
+    template = "insta" if cb.data == "template_insta" else "classic"
+    await cb.answer()
 
     if user_id not in user_data:
         await bot.send_message(user_id, "❌ Начните заново: /start")
         return
-
     if user_data[user_id].get("step") not in ["waiting_template", "waiting_title", "waiting_content"]:
-        if template == "classic" and user_data[user_id].get("step") == "waiting_highlight_words":
-            pass
-        else:
-            await bot.send_message(user_id, "❌ Начните заново: /start")
-            return
+        await bot.send_message(user_id, "❌ Начните заново: /start")
+        return
 
     user_data[user_id]["template"] = template
-    await safe_remove_keyboard(callback_query.message)
+    await safe_remove_keyboard(cb.message)
 
     if template == "classic":
         user_data[user_id]["step"] = "waiting_highlight_words"
-        title = user_data[user_id].get("title", "")
+        title = user_data[user_id].get("title", "") or ""
+        example = ', '.join(title.split()[:3]) if title.split() else 'важные слова'
         await bot.send_message(
             user_id,
             f"🎨 Шаблон: Классик\n\n"
             f"✏️ Отправь слова для выделения фиолетовым (через запятую/пробел).\n"
-            f"Например: {', '.join(title.split()[:3]) if title.split() else 'важные слова'}\n\n"
-            f"Если не нужно — отправь 'нет' или '-'"
+            f"Например: {example}\n\nЕсли не нужно — 'нет' или '-'"
         )
     else:
+        # Инста-дизайн для фото = сразу 2 варианта; для видео = ждём тему
+        if user_data[user_id].get("is_video"):
+            user_data[user_id]["step"] = "waiting_theme"
+            await bot.send_message(
+                user_id,
+                "📸 Шаблон: Инста-дизайн (видео).\n\n🎨 Выберите тему:",
+                reply_markup=get_theme_keyboard()
+            )
+            return
+
         user_data[user_id]["step"] = "waiting_generation"
         photo_path = user_data[user_id].get("photo")
         title = user_data[user_id].get("title")
         content = user_data[user_id].get("content")
-
         if not photo_path or not title:
-            await bot.send_message(user_id, "❌ Не хватает данных. Начните заново: /start")
+            await bot.send_message(user_id, "❌ Не хватает данных. /start")
             return
 
         await bot.send_message(
             user_id,
-            "⏳ Генерирую два варианта в шаблоне «Инста-дизайн»...\n"
-            "1. Чёрно-белый (чёрный фон)\n"
-            "2. Бело-чёрный (белый фон)"
+            "⏳ Генерирую два варианта «Инста-дизайн»...\n1. Чёрный фон\n2. Белый фон"
         )
-
-        dark_output = await generate_story_insta(photo_path, title, content, theme="dark")
-        with open(dark_output, 'rb') as photo_file:
-            await bot.send_photo(chat_id=user_id, photo=photo_file, caption="1. Чёрно-белый (чёрный фон)")
-
-        light_output = await generate_story_insta(photo_path, title, content, theme="light")
-        with open(light_output, 'rb') as photo_file:
-            await bot.send_photo(chat_id=user_id, photo=photo_file, caption="2. Бело-чёрный (белый фон)")
-
-        for file_path in [photo_path, dark_output, light_output]:
+        dark_out = await generate_story_insta(photo_path, title, content, theme="dark")
+        with open(dark_out, 'rb') as f:
+            await bot.send_photo(chat_id=user_id, photo=f, caption="1. Чёрный фон")
+        light_out = await generate_story_insta(photo_path, title, content, theme="light")
+        with open(light_out, 'rb') as f:
+            await bot.send_photo(chat_id=user_id, photo=f, caption="2. Белый фон")
+        for p in [photo_path, dark_out, light_out]:
             try:
-                if os.path.exists(file_path):
-                    os.remove(file_path)
-            except Exception as e:
-                logging.warning(f"⚠️ Не удалось удалить {file_path}: {e}")
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+        user_data.pop(user_id, None)
 
-        if user_id in user_data:
-            del user_data[user_id]
 
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('theme_'))
-async def process_theme_callback(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    theme = "dark" if callback_query.data == "theme_dark" else "light"
-    await callback_query.answer()
+async def process_theme_callback(cb: types.CallbackQuery):
+    user_id = cb.from_user.id
+    theme = "dark" if cb.data == "theme_dark" else "light"
+    await cb.answer()
 
     if user_id not in user_data:
-        await bot.send_message(user_id, "❌ Начните заново: /start")
+        await bot.send_message(user_id, "❌ /start")
         return
-
     if user_data[user_id].get("step") not in ["waiting_theme", "waiting_highlight_words"]:
-        await bot.send_message(user_id, "❌ Начните заново: /start")
+        await bot.send_message(user_id, "❌ /start")
         return
 
     user_data[user_id]["theme"] = theme
     user_data[user_id]["step"] = "waiting_rubric"
-    await safe_remove_keyboard(callback_query.message)
+    await safe_remove_keyboard(cb.message)
 
     await bot.send_message(
         user_id,
         f"🎨 Тема: {'🌙 Тёмная' if theme == 'dark' else '☀️ Светлая'}\n\n"
-        f"📌 Теперь выберите рубрику (или «Без неё»):",
+        f"📌 Выберите рубрику:",
         reply_markup=get_rubric_keyboard()
     )
 
+
 @dp.callback_query_handler(lambda c: c.data and c.data.startswith('rubric_'))
-async def process_rubric_callback(callback_query: types.CallbackQuery):
-    user_id = callback_query.from_user.id
-    raw = callback_query.data.replace('rubric_', '')
+async def process_rubric_callback(cb: types.CallbackQuery):
+    user_id = cb.from_user.id
+    raw = cb.data.replace('rubric_', '')
     rubric = None if raw == 'none' else raw
-    await callback_query.answer()
+    await cb.answer()
 
     if user_id not in user_data:
-        await bot.send_message(user_id, "❌ Начните заново: /start")
+        await bot.send_message(user_id, "❌ /start")
         return
-
     if user_data[user_id].get("step") not in ["waiting_rubric", "waiting_theme"]:
-        await bot.send_message(user_id, "❌ Начните заново: /start")
+        await bot.send_message(user_id, "❌ /start")
         return
 
     user_data[user_id]["rubric"] = rubric
-    user_data[user_id]["step"] = "done"
-    await safe_remove_keyboard(callback_query.message)
+    await safe_remove_keyboard(cb.message)
 
     photo_path = user_data[user_id].get("photo")
     title = user_data[user_id].get("title")
@@ -909,31 +837,68 @@ async def process_rubric_callback(callback_query: types.CallbackQuery):
     highlight_words = user_data[user_id].get("highlight_words", [])
     theme = user_data[user_id].get("theme", "light")
     template = user_data[user_id].get("template", "classic")
+    is_video = user_data[user_id].get("is_video", False)
 
     if not photo_path or not title:
-        await bot.send_message(user_id, "❌ Не хватает данных. Начните заново: /start")
+        await bot.send_message(user_id, "❌ Не хватает данных. /start")
         return
 
-    label = "📸 Инста-дизайн" if template == "insta" else f"🎨 Классик / {'тёмная' if theme == 'dark' else 'светлая'}"
+    if is_video:
+        await bot.send_message(user_id, "⏳ Обрабатываю видео (до 30 сек) — это займёт немного времени...")
+        out_path = f"output_video_{user_id}.mp4"
+        try:
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None,
+                generate_video_story,
+                photo_path, title, content, rubric, highlight_words, theme, out_path
+            )
+            with open(out_path, 'rb') as f:
+                await bot.send_video(
+                    chat_id=user_id,
+                    video=f,
+                    duration=VIDEO_MAX_DURATION,
+                    caption=f"✅ Готово! ({'🌙' if theme == 'dark' else '☀️'} · {rubric or 'без рубрики'})"
+                )
+        except Exception as e:
+            logging.exception("Video generation failed")
+            await bot.send_message(user_id, f"❌ Ошибка видео: {e}")
+        finally:
+            for p in [photo_path, out_path]:
+                try:
+                    if p and os.path.exists(p):
+                        os.remove(p)
+                except Exception:
+                    pass
+            user_data.pop(user_id, None)
+        return
+
+    # фото (классик)
     await bot.send_message(
         user_id,
-        f"⏳ Генерирую сторис ({label}"
-        f"{', рубрика: ' + rubric if rubric else ', без рубрики'})..."
+        f"⏳ Генерирую сторис (🎨 {'тёмная' if theme == 'dark' else 'светлая'}"
+        f"{', рубрика: ' + rubric if rubric else ''})..."
     )
-    await process_story(user_id, photo_path, title, content, rubric, highlight_words,
-                        callback_query.message, theme, template)
+    try:
+        out = await generate_story_classic(photo_path, title, content, rubric, highlight_words, theme)
+        with open(out, 'rb') as f:
+            await bot.send_photo(chat_id=user_id, photo=f, caption="✅ Готово!")
+        for p in [photo_path, out]:
+            try:
+                if p and os.path.exists(p):
+                    os.remove(p)
+            except Exception:
+                pass
+    except Exception as e:
+        logging.exception("Photo generation failed")
+        await bot.send_message(user_id, f"❌ Ошибка: {e}")
+    finally:
+        user_data.pop(user_id, None)
 
-    if user_id in user_data:
-        del user_data[user_id]
 
-# ========== ХЕНДЛЕР: НОВЫЙ ПОСТ В КАНАЛЕ ==========
-@dp.channel_post_handler(content_types=['photo', 'document', 'text'])
+# ========== АВТОПОСТИНГ ИЗ КАНАЛА (с поддержкой видео) ==========
+@dp.channel_post_handler(content_types=['photo', 'document', 'video', 'text'])
 async def handle_channel_post(message: types.Message):
-    """
-    Ловит новые посты в канале, где бот администратор.
-    Генерирует 4 сторис (классик светлая/тёмная + инста светлая/тёмная)
-    и присылает их в ADMIN_CHAT_ID.
-    """
     chat_title = message.chat.title or str(message.chat.id)
     logging.info(f"📢 Новый пост в канале «{chat_title}» (id={message.chat.id})")
 
@@ -943,157 +908,150 @@ async def handle_channel_post(message: types.Message):
         return
 
     target_chat = ADMIN_CHAT_ID if ADMIN_CHAT_ID else message.chat.id
-    if not ADMIN_CHAT_ID:
-        logging.warning("⚠️ ADMIN_CHAT_ID не задан — отправляю в канал")
 
-    # Скачиваем фото
-    photo_file_path = None
+    media_path = None
+    is_video = False
     try:
         if message.photo:
-            file = await bot.get_file(message.photo[-1].file_id)
-            photo_file_path = f"temp_ch_{message.chat.id}_{message.message_id}.jpg"
-            await bot.download_file(file.file_path, photo_file_path)
-        elif message.document and message.document.mime_type and message.document.mime_type.startswith('image/'):
-            file = await bot.get_file(message.document.file_id)
-            photo_file_path = f"temp_ch_{message.chat.id}_{message.message_id}.jpg"
-            await bot.download_file(file.file_path, photo_file_path)
+            f = await bot.get_file(message.photo[-1].file_id)
+            media_path = f"temp_ch_{message.chat.id}_{message.message_id}.jpg"
+            await bot.download_file(f.file_path, media_path)
+        elif message.video:
+            f = await bot.get_file(message.video.file_id)
+            media_path = f"temp_ch_{message.chat.id}_{message.message_id}.mp4"
+            await bot.download_file(f.file_path, media_path)
+            is_video = True
+        elif message.document and message.document.mime_type:
+            mt = message.document.mime_type
+            if mt.startswith('image/'):
+                f = await bot.get_file(message.document.file_id)
+                media_path = f"temp_ch_{message.chat.id}_{message.message_id}.jpg"
+                await bot.download_file(f.file_path, media_path)
+            elif mt.startswith('video/'):
+                f = await bot.get_file(message.document.file_id)
+                media_path = f"temp_ch_{message.chat.id}_{message.message_id}.mp4"
+                await bot.download_file(f.file_path, media_path)
+                is_video = True
     except Exception as e:
-        logging.error(f"❌ Не удалось скачать фото из канала: {e}")
+        logging.error(f"❌ Скачивание медиа из канала: {e}")
 
-    # Чистим текст
     text = text.replace("**Текст отсутствует**", "").strip()
     lines = text.split('\n')
-    clean_lines = []
-    for line in lines:
-        line = line.strip()
-        if line and not line.startswith('Подписаться') and not line.startswith('@') and not line.startswith('#'):
-            clean_lines.append(line)
-    text = '\n'.join(clean_lines)
-    text = remove_emojis(text)
+    clean = [l.strip() for l in lines
+             if l.strip() and not l.strip().startswith(('Подписаться', '@', '#'))]
+    text = remove_emojis('\n'.join(clean))
 
     title, content = parse_text(text)
     if not title and text:
         sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-        if sentences:
-            title = sentences[0]
-            content = ". ".join(sentences[1:])
+        title = sentences[0] if sentences else "ЗАГОЛОВОК НОВОСТИ"
+        content = ". ".join(sentences[1:]) if len(sentences) > 1 else "Текст отсутствует"
     if not title:
         title = "ЗАГОЛОВОК НОВОСТИ"
     if not content:
         content = "Текст отсутствует"
 
-    photo_for_gen = photo_file_path if photo_file_path else "nonexistent.jpg"
-
-    # Все 4 варианта: (шаблон, тема, подпись)
-    variants = [
-        ("classic", "light", "🎨 Классик · ☀️ Светлая"),
-        ("classic", "dark",  "🎨 Классик · 🌙 Тёмная"),
-        ("insta",   "light", "📸 Инста-дизайн · ☀️ Светлая"),
-        ("insta",   "dark",  "📸 Инста-дизайн · 🌙 Тёмная"),
-    ]
-
-    generated_files = []
+    media_for_gen = media_path if media_path else "nonexistent.jpg"
+    generated = []
 
     try:
         await bot.send_message(
             target_chat,
             f"📢 Новый пост в канале «{chat_title}»\n"
-            f"🎨 Генерирую 4 варианта сторис (классик + инста, светлая + тёмная)..."
+            f"{'🎬 Обнаружено видео — генерирую видео-сторис (30 сек)' if is_video else '🎨 Генерирую 4 варианта сторис'}"
         )
 
-        for template, theme, label in variants:
-            try:
-                if template == "classic":
-                    out_path = await generate_story_classic(
-                        photo_for_gen, title, content, None, [], theme
-                    )
-                else:
-                    out_path = await generate_story_insta(
-                        photo_for_gen, title, content, theme
-                    )
-                generated_files.append(out_path)
-
-                with open(out_path, 'rb') as f:
-                    await bot.send_photo(
-                        chat_id=target_chat,
-                        photo=f,
-                        caption=f"{label}\n\n📝 {title[:120]}"
-                    )
-            except Exception as e:
-                logging.error(f"❌ Ошибка генерации {template}/{theme}: {e}")
+        if is_video:
+            # Один видео-вариант (классик, тёмная тема по умолчанию)
+            out_v = f"ch_video_{message.chat.id}_{message.message_id}.mp4"
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(
+                None, generate_video_story,
+                media_for_gen, title, content, None, [], "dark", out_v
+            )
+            generated.append(out_v)
+            with open(out_v, 'rb') as f:
+                await bot.send_video(
+                    chat_id=target_chat,
+                    video=f,
+                    duration=VIDEO_MAX_DURATION,
+                    caption=f"🎬 Видео-сторис (30 сек)\n\n📝 {title[:120]}"
+                )
+        else:
+            variants = [
+                ("classic", "light", "🎨 Классик · ☀️ Светлая"),
+                ("classic", "dark",  "🎨 Классик · 🌙 Тёмная"),
+                ("insta",   "light", "📸 Инста-дизайн · ☀️ Светлая"),
+                ("insta",   "dark",  "📸 Инста-дизайн · 🌙 Тёмная"),
+            ]
+            for template, theme, label in variants:
                 try:
-                    await bot.send_message(
-                        target_chat,
-                        f"❌ Не удалось сгенерировать {template}/{theme}: {e}"
-                    )
-                except:
-                    pass
+                    if template == "classic":
+                        out_path = await generate_story_classic(media_for_gen, title, content, None, [], theme)
+                    else:
+                        out_path = await generate_story_insta(media_for_gen, title, content, theme)
+                    generated.append(out_path)
+                    with open(out_path, 'rb') as f:
+                        await bot.send_photo(chat_id=target_chat, photo=f,
+                                             caption=f"{label}\n\n📝 {title[:120]}")
+                except Exception as e:
+                    logging.error(f"❌ {template}/{theme}: {e}")
 
         logging.info(f"✅ Сторис для «{chat_title}» отправлены в {target_chat}")
 
     except Exception as e:
-        logging.error(f"❌ Общая ошибка при генерации сторис для канала: {e}")
+        logging.exception("Channel post processing failed")
         try:
             await bot.send_message(target_chat, f"❌ Ошибка: {e}")
-        except:
+        except Exception:
             pass
 
     finally:
-        for p in [photo_file_path] + generated_files:
+        for p in [media_path] + generated:
             try:
                 if p and os.path.exists(p):
                     os.remove(p)
-            except Exception as e:
-                logging.warning(f"⚠️ Не удалось удалить {p}: {e}")
+            except Exception:
+                pass
+
 
 # ========== ЗАПУСК ==========
 async def on_startup(dp):
     try:
         await bot.delete_webhook(drop_pending_updates=True)
-        print("✅ Вебхук удален, pending updates сброшены")
+        print("✅ Вебхук удалён")
     except Exception as e:
-        print(f"⚠️ Ошибка удаления вебхука: {e}")
-
+        print(f"⚠️ delete_webhook: {e}")
     await asyncio.sleep(3)
-
     try:
         me = await bot.get_me()
         print(f"✅ Бот: @{me.username} (id={me.id})")
     except Exception as e:
-        print(f"⚠️ get_me failed: {e}")
+        print(f"⚠️ get_me: {e}")
+    print(f"📥 ADMIN_CHAT_ID: {ADMIN_CHAT_ID or 'не задан (в канал)'}")
 
-    if ADMIN_CHAT_ID:
-        print(f"📥 Готовые сторис будут приходить в чат: {ADMIN_CHAT_ID}")
-    else:
-        print("⚠️ ADMIN_CHAT_ID не задан — сторис будут публиковаться в канал")
 
 async def on_shutdown(dp):
     try:
         await bot.close()
-        print("✅ Сессия бота закрыта")
+        print("✅ Сессия закрыта")
     except Exception as e:
-        print(f"⚠️ Ошибка при закрытии сессии: {e}")
+        print(f"⚠️ close: {e}")
+
 
 if __name__ == "__main__":
     from aiogram import executor
-
     print("🚀 Бот запускается...")
-    print("⚠️ Убедитесь, что запущен только ОДИН экземпляр бота!")
-
     max_attempts = 3
     for attempt in range(1, max_attempts + 1):
         try:
-            executor.start_polling(
-                dp,
-                skip_updates=True,
-                on_startup=on_startup,
-                on_shutdown=on_shutdown,
-            )
+            executor.start_polling(dp, skip_updates=True,
+                                   on_startup=on_startup, on_shutdown=on_shutdown)
             break
         except TerminatedByOtherGetUpdates:
-            print(f"⚠️ Конфликт getUpdates (попытка {attempt}/{max_attempts}). Ждём 5 секунд...")
+            print(f"⚠️ Конфликт getUpdates ({attempt}/{max_attempts}), ждём 5 сек...")
             import time
             time.sleep(5)
         except Exception as e:
-            print(f"❌ Ошибка при запуске: {e}")
+            print(f"❌ Ошибка запуска: {e}")
             break
