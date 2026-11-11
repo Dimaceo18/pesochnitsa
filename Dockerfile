@@ -4,11 +4,15 @@ FROM python:3.10.13-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
-# Устанавливаем системные зависимости
-RUN apt-get update && apt-get install -y \
+# Устанавливаем системные зависимости:
+# - ffmpeg         → обработка видео (видео-сторис, MP4)
+# - шрифты         → как в старой версии + эмодзи
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
     fonts-dejavu \
     fonts-liberation \
     fonts-ubuntu \
+    fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
 # Копируем файлы зависимостей
@@ -20,7 +24,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Копируем код бота
 COPY bot.py .
 
-# Создаем папку для временных файлов
+# Создаём папку для временных файлов
 RUN mkdir -p temp_images
 
 # Команда запуска
