@@ -13,7 +13,7 @@ from aiogram.utils.exceptions import TerminatedByOtherGetUpdates
 import textwrap
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v2"
+BOT_VERSION = "video-stories-v4"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -132,6 +132,51 @@ def remove_emojis(text: str) -> str:
     cleaned = '\n'.join(line.strip() for line in cleaned.split('\n'))
     cleaned = re.sub(r'\n{3,}', '\n\n', cleaned)
     return cleaned.strip()
+
+
+LIST_ITEM_RE = re.compile(
+    r'^\s*(?:'
+    r'\d{1,3}[.)]\s+'
+    r'|[•●○◦▪▫■□►▶➤➢✓✔]\s+'
+    r'|[-–—*]\s+'
+    r')'
+)
+
+
+def is_list_item(line: str) -> bool:
+    return bool(LIST_ITEM_RE.match(line))
+
+
+def normalize_lists(text: str) -> str:
+    if not text:
+        return text
+    lines = text.split('\n')
+    out = []
+    prev_was_list = False
+    pending_blank = 0
+
+    for raw in lines:
+        line = raw.rstrip()
+        stripped = line.strip()
+
+        if not stripped:
+            pending_blank += 1
+            continue
+
+        cur_is_list = is_list_item(stripped)
+
+        if pending_blank > 0:
+            if prev_was_list and cur_is_list:
+                pass
+            else:
+                if out:
+                    out.append('')
+            pending_blank = 0
+
+        out.append(line)
+        prev_was_list = cur_is_list
+
+    return '\n'.join(out).strip()
 
 
 def parse_text(text: str):
@@ -301,7 +346,10 @@ def render_base_canvas(title, content, rubric, highlight_words, theme, photo_pat
 
     text_font_size = 34
     wrapped_paragraphs = []
-    for size in range(42, 20, -2):
+    # Основной текст классик-шаблона всегда меньше заголовка (минимум на 2pt)
+    classic_text_max = max(20, title_font_size - 2)
+    classic_text_start = min(42, classic_text_max)
+    for size in range(classic_text_start, 19, -2):
         tf = load_font(size, 'regular')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
@@ -396,6 +444,43 @@ def wrap_text_strict(draw, text, font, max_width):
     return lines
 
 
+def split_content_blocks(content: str):
+    if not content or content == "Текст отсутствует":
+        return [("para", ["Текст отсутствует"])]
+
+    blocks = []
+    cur_kind = None
+    cur_lines = []
+
+    for raw in content.split('\n'):
+        line = raw.rstrip()
+        if not line.strip():
+            if cur_lines:
+                blocks.append((cur_kind, cur_lines))
+                cur_lines = []
+                cur_kind = None
+            continue
+
+        stripped = line.strip()
+        is_list = is_list_item(stripped)
+        kind = "list" if is_list else "para"
+
+        if cur_kind is None:
+            cur_kind = kind
+            cur_lines = [stripped]
+        elif kind == cur_kind:
+            cur_lines.append(stripped)
+        else:
+            blocks.append((cur_kind, cur_lines))
+            cur_kind = kind
+            cur_lines = [stripped]
+
+    if cur_lines:
+        blocks.append((cur_kind, cur_lines))
+
+    return blocks
+
+
 async def generate_story_insta(photo_path, title, content, theme="dark"):
     if theme == "dark":
         bg_color, text_color, plate_color, title_text_color = 'black', 'white', 'white', 'black'
@@ -476,46 +561,80 @@ async def generate_story_insta(photo_path, title, content, theme="dark"):
 
     # ========== Основной текст с резервом 10% снизу под ссылку ==========
     text_y = cur_y + I_TEXT_TOP_GAP
-    bottom_reserve = int(IH * I_TEXT_BOTTOM_RESERVE_PCT)  # 10% снизу — только фон
+    bottom_reserve = int(IH * I_TEXT_BOTTOM_RESERVE_PCT)
     available_h = IH - text_y - bottom_reserve
-    # Защита от отрицательного значения, если заголовок занял слишком много места
     if available_h < 60:
         available_h = 60
     text_line_max_width = max_plate_w - 4
 
-    if content and content != "Текст отсутствует":
-        paragraphs = [p.strip() for p in content.split('\n\n') if p.strip()]
-    else:
-        paragraphs = ["Текст отсутствует"]
+    blocks = split_content_blocks(content)
 
-    text_font_size, wrapped_paragraphs = I_TEXT_FONT_MAX, []
-    for size in range(I_TEXT_FONT_MAX, I_TEXT_FONT_MIN - 1, -1):
+    def measure_blocks(tf, sh):
+        total = 0
+        tmp = []
+        for kind, raw_lines in blocks:
+            if kind == "list":
+                wrapped = []
+                for i, ln in enumerate(raw_lines):
+                    ls = wrap_text_strict(draw, ln.upper(), tf, text_line_max_width)
+                    wrapped.append(ls)
+                    total += len(ls) * (sh + I_TEXT_LINE_GAP)
+                    if i < len(raw_lines) - 1:
+                        total += I_TEXT_LINE_GAP
+                tmp.append(("list", wrapped))
+                total += I_TEXT_PARA_GAP
+            else:
+                wrapped = []
+                for ln in raw_lines:
+                    ls = wrap_text_strict(draw, ln.upper(), tf, text_line_max_width)
+                    wrapped.append(ls)
+                    total += len(ls) * (sh + I_TEXT_LINE_GAP)
+                tmp.append(("para", wrapped))
+                total += I_TEXT_PARA_GAP
+        return total, tmp
+
+    # Заголовок всегда должен быть крупнее основного текста:
+    # ограничиваем верхнюю границу шрифта текста так,
+    # чтобы он был минимум на 2pt меньше заголовка.
+    text_font_max_allowed = max(I_TEXT_FONT_MIN, title_font_size - 2)
+    text_font_start = min(I_TEXT_FONT_MAX, text_font_max_allowed)
+
+    text_font_size, wrapped_blocks = text_font_start, []
+    for size in range(text_font_start, I_TEXT_FONT_MIN - 1, -1):
         tf = load_font(size, 'bold_text')
         sb = draw.textbbox((0, 0), "A", font=tf)
         sh = sb[3] - sb[1]
-        total_h, tmp = 0, []
-        for para in paragraphs:
-            lines = wrap_text_strict(draw, para.upper(), tf, text_line_max_width)
-            tmp.append(lines)
-            total_h += len(lines) * (sh + I_TEXT_LINE_GAP) + I_TEXT_PARA_GAP
+        total_h, tmp = measure_blocks(tf, sh)
         if total_h <= available_h:
-            text_font_size, wrapped_paragraphs = size, tmp
+            text_font_size, wrapped_blocks = size, tmp
             break
-    if not wrapped_paragraphs:
+    if not wrapped_blocks:
         tf = load_font(I_TEXT_FONT_MIN, 'bold_text')
-        for para in paragraphs:
-            wrapped_paragraphs.append(wrap_text_strict(draw, para.upper(), tf, text_line_max_width))
+        sb = draw.textbbox((0, 0), "A", font=tf)
+        sh = sb[3] - sb[1]
+        _, wrapped_blocks = measure_blocks(tf, sh)
         text_font_size = I_TEXT_FONT_MIN
 
     text_font = load_font(text_font_size, 'bold_text')
     sb = draw.textbbox((0, 0), "A", font=text_font)
     sh = sb[3] - sb[1]
     pos_y = text_y
-    for para_lines in wrapped_paragraphs:
-        for line in para_lines:
-            draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=text_color)
-            pos_y += sh + I_TEXT_LINE_GAP
-        pos_y += I_TEXT_PARA_GAP
+
+    for kind, wrapped in wrapped_blocks:
+        if kind == "list":
+            for i, ls in enumerate(wrapped):
+                for line in ls:
+                    draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=text_color)
+                    pos_y += sh + I_TEXT_LINE_GAP
+                if i < len(wrapped) - 1:
+                    pos_y += I_TEXT_LINE_GAP
+            pos_y += I_TEXT_PARA_GAP
+        else:
+            for ls in wrapped:
+                for line in ls:
+                    draw.text((I_MARGIN_X, pos_y), line, font=text_font, fill=text_color)
+                    pos_y += sh + I_TEXT_LINE_GAP
+            pos_y += I_TEXT_PARA_GAP
 
     out = f"output_story_insta_{theme}.png"
     canvas.save(out, format='PNG')
@@ -676,7 +795,7 @@ async def handle_media(message: types.Message):
     lines = text.split('\n')
     clean = [l.strip() for l in lines
              if l.strip() and not l.strip().startswith(('Подписаться', '@', '#'))]
-    text = '\n'.join(clean)
+    text = normalize_lists('\n'.join(clean))
 
     if text:
         title, content = parse_text(text)
@@ -686,6 +805,7 @@ async def handle_media(message: types.Message):
             content = ". ".join(sentences[1:]) if len(sentences) > 1 else "Текст отсутствует"
         if not content:
             content = "Текст отсутствует"
+        content = normalize_lists(content)
 
         user_data[user_id] = {
             "photo": media_path,
@@ -731,7 +851,8 @@ async def handle_text(message: types.Message):
         return
 
     if step == "waiting_content":
-        user_data[user_id]["content"] = remove_emojis(message.text)
+        content = normalize_lists(remove_emojis(message.text))
+        user_data[user_id]["content"] = content
         user_data[user_id]["step"] = "waiting_template"
         await bot.send_message(user_id, "✅ Текст сохранён!\n\n🖼 Выберите шаблон:",
                                reply_markup=get_template_keyboard())
@@ -973,7 +1094,7 @@ async def handle_channel_post(message: types.Message):
     lines = text.split('\n')
     clean = [l.strip() for l in lines
              if l.strip() and not l.strip().startswith(('Подписаться', '@', '#'))]
-    text = remove_emojis('\n'.join(clean))
+    text = normalize_lists(remove_emojis('\n'.join(clean)))
 
     title, content = parse_text(text)
     if not title and text:
@@ -984,6 +1105,7 @@ async def handle_channel_post(message: types.Message):
         title = "ЗАГОЛОВОК НОВОСТИ"
     if not content:
         content = "Текст отсутствует"
+    content = normalize_lists(content)
 
     media_for_gen = media_path if media_path else "nonexistent.jpg"
     generated = []
