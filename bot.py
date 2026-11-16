@@ -74,6 +74,14 @@ I_TEXT_FONT_MIN = 16
 I_TEXT_LINE_GAP = 6
 I_TEXT_PARA_GAP = 16
 
+# Резерв снизу под ссылку (10% высоты — только фон)
+I_TEXT_BOTTOM_RESERVE_PCT = 0.10
+
+# Порог минимального шрифта заголовка, при котором ещё пытаемся уложить в 3 строки
+I_TITLE_THREE_LINE_MIN_SIZE = 40
+# Максимальная высота блока заголовка (плашки)
+I_TITLE_BLOCK_MAX_H = 300
+
 RUBRICS = ["НОВОСТИ", "АФИША", "СПОРТ", "ФИНАНСЫ", "АВТО", "НЕДВИЖИМОСТЬ"]
 
 logging.basicConfig(level=logging.INFO)
@@ -415,20 +423,34 @@ async def generate_story_insta(photo_path, title, content, theme="dark"):
                   font=load_font(28, 'black'), fill=placeholder_text)
 
     max_width = IW - 2 * I_MARGIN_X
-    title_words_count = len(title.upper().split())
-    max_lines_allowed = 3 if title_words_count <= 9 else 4
 
-    title_font_size, title_lines = I_TITLE_FONT_MAX, []
-    for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
+    # ========== 1) Пытаемся уложить заголовок в 3 строки ==========
+    title_font_size, title_lines = None, []
+    for size in range(I_TITLE_FONT_MAX, I_TITLE_THREE_LINE_MIN_SIZE - 1, -1):
         tf = load_font(size, 'black')
         lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
         lb = draw.textbbox((0, 0), "A", font=tf)
         lh = lb[3] - lb[1]
         plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
         total_h = len(lines) * plate_h + (len(lines) - 1) * I_TITLE_LINE_GAP
-        if len(lines) <= max_lines_allowed and total_h <= 300:
+        if len(lines) <= 3 and total_h <= I_TITLE_BLOCK_MAX_H:
             title_font_size, title_lines = size, lines
             break
+
+    # ========== 2) Если в 3 строки не влезло — разрешаем 4 строки ==========
+    if not title_lines:
+        for size in range(I_TITLE_FONT_MAX, I_TITLE_FONT_MIN - 1, -1):
+            tf = load_font(size, 'black')
+            lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
+            lb = draw.textbbox((0, 0), "A", font=tf)
+            lh = lb[3] - lb[1]
+            plate_h = lh + 2 * I_TITLE_PLATE_PAD_Y
+            total_h = len(lines) * plate_h + (len(lines) - 1) * I_TITLE_LINE_GAP
+            if len(lines) <= 4 and total_h <= I_TITLE_BLOCK_MAX_H:
+                title_font_size, title_lines = size, lines
+                break
+
+    # ========== 3) Фолбэк — минимальный шрифт ==========
     if not title_lines:
         tf = load_font(I_TITLE_FONT_MIN, 'black')
         title_lines = wrap_title_by_width(draw, title, tf, max_width - 2 * I_TITLE_PLATE_PAD_X)
@@ -452,8 +474,13 @@ async def generate_story_insta(photo_path, title, content, theme="dark"):
         draw.text((x1 + plate_w / 2, y1 + plate_h / 2), line, font=title_font, fill=title_text_color, anchor="mm")
         cur_y = y2 + I_TITLE_LINE_GAP
 
+    # ========== Основной текст с резервом 10% снизу под ссылку ==========
     text_y = cur_y + I_TEXT_TOP_GAP
-    available_h = IH - text_y - 24
+    bottom_reserve = int(IH * I_TEXT_BOTTOM_RESERVE_PCT)  # 10% снизу — только фон
+    available_h = IH - text_y - bottom_reserve
+    # Защита от отрицательного значения, если заголовок занял слишком много места
+    if available_h < 60:
+        available_h = 60
     text_line_max_width = max_plate_w - 4
 
     if content and content != "Текст отсутствует":
