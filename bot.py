@@ -14,7 +14,7 @@ import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v15-resilient-getupdates-20261123"
+BOT_VERSION = "video-stories-v16-aiogram-context-20261123"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -1267,6 +1267,10 @@ async def polling_worker(app):
             for update in updates:
                 # Передаём обновления тем же зарегистрированным обработчикам.
                 try:
+                    # При ручном getUpdates aiogram не устанавливает контекст автоматически.
+                    # Без него cb.answer(), message.answer() и другие методы падают.
+                    Bot.set_current(bot)
+                    Dispatcher.set_current(dp)
                     await dp.process_update(update)
                 except asyncio.CancelledError:
                     raise
