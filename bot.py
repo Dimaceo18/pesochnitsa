@@ -14,7 +14,7 @@ import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v12-explicit-aiohttp-route-20261123"
+BOT_VERSION = "video-stories-v13-polling-webservice-20261123"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -1200,112 +1200,78 @@ async def handle_channel_post(message: types.Message):
                     logging.warning("Не удалось удалить временный файл %s", path)
 
 
-# ========== WEBHOOK ДЛЯ RENDER WEB SERVICE ==========
-# Explicit aiohttp route: no aiogram executor, no polling.
+# ========== POLLING + HTTP HEALTH ДЛЯ RENDER WEB SERVICE ==========
+# Никаких set_webhook: Telegram updates принимаются только через getUpdates.
+# WEBHOOK_URL можно удалить из Environment: в этом режиме она не используется.
 from aiohttp import web
 
-WEBHOOK_BASE_URL = (
-    os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
-    or os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
-)
-WEBHOOK_PATH = "/telegram/" + hashlib.sha256(API_TOKEN.encode("utf-8")).hexdigest()[:32]
 WEBHOOK_HOST = "0.0.0.0"
 WEBHOOK_PORT = int(os.getenv("PORT", "10000"))
 
 
-@web.middleware
-async def http_log_middleware(request, handler):
-    # Do not log secret path or Telegram payloads.
-    is_webhook = request.path == WEBHOOK_PATH
-    logging.info("🌐 HTTP REQUEST: method=%s endpoint=%s",
-                 request.method, "telegram-webhook" if is_webhook else "other")
-    try:
-        response = await handler(request)
-        logging.info("🌐 HTTP RESPONSE: endpoint=%s status=%s",
-                     "telegram-webhook" if is_webhook else "other", response.status)
-        return response
-    except web.HTTPException as exc:
-        logging.warning("🌐 HTTP ERROR: endpoint=%s status=%s",
-                        "telegram-webhook" if is_webhook else "other", exc.status)
-        raise
-    except Exception:
-        logging.exception("❌ HTTP REQUEST FAILED")
-        raise
-
-
 async def health(request):
-    return web.json_response({"status": "ok", "version": BOT_VERSION, "webhook_route": "registered"})
+    return web.json_response({
+        "status": "ok",
+        "version": BOT_VERSION,
+        "mode": "polling",
+    })
 
 
-async def telegram_webhook(request):
-    # Telegram uses POST with JSON. Never expose token or request content in logs.
-    if request.content_type != "application/json":
-        return web.Response(status=415, text="JSON required")
-    try:
-        payload = await request.json()
-        update = types.Update.to_object(payload)
-        logging.info("📨 TELEGRAM UPDATE RECEIVED HTTP: id=%s", update.update_id)
-        # Respond after processing, so Telegram can retry if processing fails.
-        await dp.process_update(update)
-        return web.Response(status=200, text="OK")
-    except Exception:
-        logging.exception("❌ TELEGRAM UPDATE PROCESSING FAILED")
-        return web.Response(status=500, text="Update processing error")
-
-
-async def monitor_webhook():
-    expected = WEBHOOK_BASE_URL + WEBHOOK_PATH
+async def polling_worker(app):
+    # Даём HTTP-серверу запуститься до подключения Telegram.
+    await asyncio.sleep(2)
     while True:
-        await asyncio.sleep(45)
         try:
+            # Важно: удалить webhook ПЕРЕД первым getUpdates.
+            await bot.delete_webhook(drop_pending_updates=False)
             info = await bot.get_webhook_info()
-            if info.url != expected:
-                logging.error("❌ WEBHOOK CHANGED BY ANOTHER PROCESS: URL mismatch")
-            else:
-                logging.info("🔎 WEBHOOK STATUS: pending=%s last_error_date=%s last_error=%s",
-                             info.pending_update_count,
-                             getattr(info, "last_error_date", None),
-                             getattr(info, "last_error_message", None))
+            if info.url:
+                logging.error("❌ Webhook всё ещё активен; повторная попытка через 10 секунд")
+                await asyncio.sleep(10)
+                continue
+            logging.info("✅ Webhook удалён, запускаю polling")
+            # reset_webhook=False: мы уже удалили webhook и сохранили очередь.
+            await dp.start_polling(
+                reset_webhook=False,
+                timeout=25,
+                relax=1,
+                error_sleep=10,
+                allowed_updates=["message", "callback_query", "channel_post"],
+            )
+            logging.warning("⚠️ Polling завершился; повторный запуск через 10 секунд")
+        except asyncio.CancelledError:
+            raise
         except Exception:
-            logging.exception("Webhook status check failed")
+            logging.exception("❌ Ошибка polling. Повтор через 10 секунд")
+        await asyncio.sleep(10)
 
 
 async def app_startup(app):
-    if not WEBHOOK_BASE_URL.startswith("https://"):
-        raise RuntimeError("Укажите WEBHOOK_URL=https://ВАШ-СЕРВИС.onrender.com")
     me = await bot.get_me()
-    logging.info("🚀 START %s: EXPLICIT AIOHTTP WEBHOOK, PORT=%s", BOT_VERSION, WEBHOOK_PORT)
-    logging.info("🛣️ HTTP ROUTES: GET /, GET /health, POST /telegram/[secret]")
+    logging.info("🚀 START %s: POLLING + WEB SERVICE, PORT=%s", BOT_VERSION, WEBHOOK_PORT)
+    logging.info("🤖 Бот: @%s", me.username)
     logging.info("📥 ADMIN_CHAT_ID: %s", ADMIN_CHAT_ID or "НЕ ЗАДАН")
     logging.info("📡 Источник: %s", STORY_SOURCE_CHANNEL_ID or "все каналы, где бот администратор")
-    logging.info("🤖 Бот: @%s", me.username)
-    # The route is registered before app_startup; set webhook only after route setup.
-    address = WEBHOOK_BASE_URL + WEBHOOK_PATH
-    await bot.set_webhook(url=address, allowed_updates=["message", "callback_query", "channel_post"],
-                          drop_pending_updates=False)
-    info = await bot.get_webhook_info()
-    logging.info("✅ WEBHOOK SET: url_matches=%s pending=%s",
-                 info.url == address, info.pending_update_count)
-    app["monitor_task"] = asyncio.create_task(monitor_webhook())
+    # Запускаем polling в том же event loop, не блокируя HTTP health endpoint.
+    app["polling_task"] = asyncio.create_task(polling_worker(app))
 
 
 async def app_shutdown(app):
-    task = app.get("monitor_task")
+    task = app.get("polling_task")
     if task:
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
-    # Do not delete webhook during rolling deployments.
-    await bot.close()
+    # При rolling deploy не удаляем webhook: новый экземпляр сам управляет им.
+    await (await bot.get_session()).close()
 
 
 def create_app():
-    app = web.Application(middlewares=[http_log_middleware], client_max_size=20 * 1024 * 1024)
+    app = web.Application()
     app.router.add_get("/", health)
     app.router.add_get("/health", health)
-    app.router.add_post(WEBHOOK_PATH, telegram_webhook)
     app.on_startup.append(app_startup)
     app.on_shutdown.append(app_shutdown)
     return app
