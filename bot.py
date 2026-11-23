@@ -14,7 +14,7 @@ import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v16-aiogram-context-20261123"
+BOT_VERSION = "video-stories-v17-stable-video-20261123"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -710,22 +710,26 @@ def generate_video_story(video_path, title, content, rubric, highlight_words, th
         filters = (
             f"[0:v]trim=duration={VIDEO_MAX_DURATION},setpts=PTS-STARTPTS,"
             f"scale={vw}:{vh}:force_original_aspect_ratio=increase,"
-            f"crop={vw}:{vh},setsar=1,fps=30,format=yuva420p[clip];"
+            f"crop={vw}:{vh},setsar=1,fps=15,format=yuv420p[clip];"
             f"[1:v][clip]overlay=0:{top}:shortest=1:format=auto,"
             f"format=yuv420p[outv]"
         )
         cmd = [
             ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y",
+            "-filter_complex_threads", "1",
             "-i", video_path,
-            "-loop", "1", "-framerate", "30", "-i", base_path,
+            "-loop", "1", "-framerate", "15", "-i", base_path,
             "-filter_complex", filters,
             "-map", "[outv]", "-map", "0:a?",
             "-t", str(VIDEO_MAX_DURATION),
-            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+            "-c:v", "libx264", "-preset", "ultrafast", "-crf", "27",
+            "-threads", "1", "-maxrate", "1800k", "-bufsize", "3600k",
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart", out_path,
         ]
+        logging.info("🎞 Начинаю кодирование видео: template=%s, input=%s", template, os.path.getsize(video_path))
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
+        logging.info("🎞 FFmpeg завершён: code=%s, output=%s", result.returncode, os.path.getsize(out_path) if os.path.exists(out_path) else 0)
         if result.returncode != 0:
             logging.error("❌ FFmpeg stderr: %s", result.stderr[-3000:])
             raise RuntimeError("Ошибка FFmpeg: " + result.stderr[-1200:])
@@ -919,7 +923,14 @@ async def process_template_callback(cb: types.CallbackQuery):
     user_id = cb.from_user.id
     logging.info(f"🔘 template callback: {cb.data} от {user_id}")
     template = "insta" if cb.data == "template_insta" else "classic"
-    await cb.answer()
+    try:
+        await cb.answer()
+    except Exception as exc:
+        # После рестарта Telegram может повторно доставить старый callback.
+        # Просроченный ответ не должен прерывать генерацию сторис.
+        if type(exc).__name__ != "InvalidQueryID":
+            raise
+        logging.warning("⚠️ Просроченный callback, продолжаю: %s", cb.data)
 
     if user_id not in user_data:
         await bot.send_message(user_id, "❌ Начните заново: /start")
@@ -983,7 +994,14 @@ async def process_theme_callback(cb: types.CallbackQuery):
     user_id = cb.from_user.id
     logging.info(f"🔘 theme callback: {cb.data} от {user_id}")
     theme = "dark" if cb.data == "theme_dark" else "light"
-    await cb.answer()
+    try:
+        await cb.answer()
+    except Exception as exc:
+        # После рестарта Telegram может повторно доставить старый callback.
+        # Просроченный ответ не должен прерывать генерацию сторис.
+        if type(exc).__name__ != "InvalidQueryID":
+            raise
+        logging.warning("⚠️ Просроченный callback, продолжаю: %s", cb.data)
 
     if user_id not in user_data:
         await bot.send_message(user_id, "❌ /start")
@@ -1010,7 +1028,14 @@ async def process_rubric_callback(cb: types.CallbackQuery):
     logging.info(f"🔘 rubric callback: {cb.data} от {user_id}")
     raw = cb.data.replace('rubric_', '')
     rubric = None if raw == 'none' else raw
-    await cb.answer()
+    try:
+        await cb.answer()
+    except Exception as exc:
+        # После рестарта Telegram может повторно доставить старый callback.
+        # Просроченный ответ не должен прерывать генерацию сторис.
+        if type(exc).__name__ != "InvalidQueryID":
+            raise
+        logging.warning("⚠️ Просроченный callback, продолжаю: %s", cb.data)
 
     if user_id not in user_data:
         await bot.send_message(user_id, "❌ /start")
