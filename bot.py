@@ -13,7 +13,7 @@ from aiogram.utils.exceptions import TerminatedByOtherGetUpdates
 import textwrap
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v6-channel-autopublish"
+BOT_VERSION = "video-stories-v8-private-inbox"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -29,9 +29,8 @@ if ADMIN_CHAT_ID:
 else:
     logging.warning("⚠️ ADMIN_CHAT_ID не задан")
 
-# Канал публикации: если не задан, публикуем в том же канале, где вышел пост.
-# Для отдельного канала укажите STORY_CHANNEL_ID=-100... или @username.
-STORY_CHANNEL_ID = os.getenv("STORY_CHANNEL_ID", "").strip()
+# Готовые сторис отправляются только в личный чат ADMIN_CHAT_ID.
+# STORY_CHANNEL_ID намеренно не используется.
 # Необязательно: обрабатывать только один исходный канал.
 STORY_SOURCE_CHANNEL_ID = os.getenv("STORY_SOURCE_CHANNEL_ID", "").strip()
 AUTO_STORY_MARKER = "🎞 Автосторис"
@@ -260,7 +259,7 @@ def render_base_canvas(title, content, rubric, highlight_words, theme, photo_pat
             else:
                 raise FileNotFoundError(photo_path)
         except Exception as e:
-            logging.error(f"❌ Фото: {e}")
+            logging.debug(f"Фото отсутствует в макете видео: {e}") if transparent_top else logging.error(f"❌ Фото: {e}")
             draw.rectangle([PHOTO_LEFT, PHOTO_TOP, PHOTO_LEFT + PHOTO_WIDTH, PHOTO_TOP + PHOTO_HEIGHT],
                            fill=placeholder_bg, outline=placeholder_outline, width=2)
             draw.text((W // 2 - 60, PHOTO_TOP + PHOTO_HEIGHT // 2 - 10),
@@ -650,58 +649,68 @@ async def generate_story_insta(photo_path, title, content, theme="dark"):
 
 # ========== ВИДЕО-СТОРИС ==========
 def generate_video_story(video_path, title, content, rubric, highlight_words, theme, out_path, template="classic"):
-    """Вставляет видео вместо фото, сохраняя текстовую часть шаблона."""
+    """MP4: исходный шаблон без изменений, видео только вместо фото."""
     import tempfile
     import shutil
-    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
-        raise RuntimeError("На сервере отсутствует ffmpeg/ffprobe. Установите ffmpeg в Dockerfile.")
-    if template == "insta":
-        # Генератор инста-шаблона рисует текст и плашки под фото.
-        # Используем тот же рендер, затем закрываем область фото видео.
-        import asyncio as _asyncio
-        overlay_path = _asyncio.run(generate_story_insta(None, title, content, theme))
-        vw, vh, top = I_PHOTO_WIDTH, I_PHOTO_HEIGHT, I_PHOTO_TOP
-    else:
-        overlay = render_base_canvas(title, content, rubric, highlight_words, theme,
-                                     photo_path=None, transparent_top=True)
-        overlay_path = None
-        vw, vh, top = PHOTO_WIDTH, PHOTO_HEIGHT, PHOTO_TOP
+    if not shutil.which("ffmpeg"):
+        raise RuntimeError("FFmpeg не установлен. Добавьте его в Dockerfile.")
+    if template not in ("classic", "insta"):
+        raise ValueError("Неизвестный шаблон: " + str(template))
 
     with tempfile.TemporaryDirectory(prefix="story_video_") as td:
         base_path = os.path.join(td, "layout.png")
         if template == "insta":
+            # Вызываем ИСХОДНЫЙ генератор: все плашки, отступы, шрифты
+            # и расположение текста идентичны фото-сторис.
+            import asyncio as _asyncio
+            # Подставляем техническое изображение вместо None, чтобы
+            # исходный генератор не сообщал об ошибке фотографии.
+            placeholder_path = os.path.join(td, "placeholder.png")
+            Image.new("RGB", (I_PHOTO_WIDTH, I_PHOTO_HEIGHT), "#111111").save(placeholder_path)
+            original_path = _asyncio.run(generate_story_insta(placeholder_path, title, content, theme))
             try:
-                with Image.open(overlay_path) as original:
-                    overlay = original.convert("RGBA")
+                with Image.open(original_path) as im:
+                    overlay = im.convert("RGBA")
             finally:
-                if os.path.exists(overlay_path):
-                    os.remove(overlay_path)
-        # Прозрачное окно для видео, неизменный текст/оформление ниже.
+                if os.path.exists(original_path):
+                    os.remove(original_path)
+            vw, vh, top = I_PHOTO_WIDTH, I_PHOTO_HEIGHT, I_PHOTO_TOP
+        else:
+            overlay = render_base_canvas(
+                title, content, rubric, highlight_words, theme,
+                photo_path=None, transparent_top=True
+            )
+            vw, vh, top = PHOTO_WIDTH, PHOTO_HEIGHT, PHOTO_TOP
+
+        # Делаем прозрачной только зону исходной фотографии.
         overlay.paste((0, 0, 0, 0), (0, top, vw, top + vh))
-        overlay.save(base_path)
-        filter_complex = (
+        overlay.save(base_path, "PNG")
+
+        # Первый вход: исходное видео; второй: неподвижный макет.
+        # overlay=shortest=1 завершает результат вместе с видео.
+        filters = (
             f"[0:v]trim=duration={VIDEO_MAX_DURATION},setpts=PTS-STARTPTS,"
             f"scale={vw}:{vh}:force_original_aspect_ratio=increase,"
-            f"crop={vw}:{vh},setsar=1,fps=30,format=yuv420p[clip];"
-            f"[1:v][clip]overlay=0:{top}:shortest=1:format=auto[composed];"
-            f"[composed]format=yuv420p[outv]"
+            f"crop={vw}:{vh},setsar=1,fps=30,format=yuva420p[clip];"
+            f"[1:v][clip]overlay=0:{top}:shortest=1:format=auto,"
+            f"format=yuv420p[outv]"
         )
-        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
-               "-loop", "1", "-framerate", "30", "-i", base_path,
-               "-i", video_path,
-               "-filter_complex", filter_complex,
-               "-map", "[outv]", "-map", "1:a?", "-t", str(VIDEO_MAX_DURATION),
-               "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
-               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
-               "-movflags", "+faststart", out_path]
-        # Важно: первый вход статичный фон, второй вход видео.
-        filter_complex = filter_complex.replace("[0:v]trim", "[1:v]trim").replace("[1:v][clip]overlay", "[0:v][clip]overlay")
-        cmd[cmd.index("-filter_complex") + 1] = filter_complex
+        cmd = [
+            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            "-i", video_path,
+            "-loop", "1", "-framerate", "30", "-i", base_path,
+            "-filter_complex", filters,
+            "-map", "[outv]", "-map", "0:a?",
+            "-t", str(VIDEO_MAX_DURATION),
+            "-c:v", "libx264", "-preset", "veryfast", "-crf", "24",
+            "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart", out_path,
+        ]
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
-            raise RuntimeError("FFmpeg: " + result.stderr[-1200:])
+            raise RuntimeError("Ошибка FFmpeg: " + result.stderr[-1500:])
         if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
-            raise RuntimeError("FFmpeg не создал видео")
+            raise RuntimeError("FFmpeg не создал итоговый MP4")
         return out_path
 
 
@@ -1086,7 +1095,10 @@ async def handle_channel_post(message: types.Message):
     media_path = None
     is_video = False
     output_path = None
-    destination = STORY_CHANNEL_ID or source_id
+    if not ADMIN_CHAT_ID:
+        logging.error("Для автосторис необходимо указать ADMIN_CHAT_ID в Render")
+        return
+    destination = ADMIN_CHAT_ID
     chat_title = message.chat.title or str(source_id)
     try:
         if message.photo:
@@ -1149,9 +1161,10 @@ async def handle_channel_post(message: types.Message):
                     caption=f"{AUTO_STORY_MARKER} | {title[:140]}",
                 )
 
-        logging.info("✅ Сторис из %s/%s опубликована в %s", source_id, message.message_id, destination)
-        # Администратору отдельно отправляем MP4 документом для скачивания.
-        if is_video and ADMIN_CHAT_ID and str(ADMIN_CHAT_ID) != str(destination):
+        logging.info("✅ Сторис из %s/%s отправлена администратору %s", source_id, message.message_id, destination)
+        # Дополнительно отправляем MP4 документом, чтобы можно было скачать
+        # исходный файл без повторного сжатия Telegram.
+        if is_video:
             try:
                 with open(output_path, "rb") as video_file:
                     await bot.send_document(
@@ -1160,7 +1173,7 @@ async def handle_channel_post(message: types.Message):
                         caption=f"📥 MP4-сторис из канала «{chat_title}»",
                     )
             except Exception:
-                logging.exception("Не удалось отправить копию MP4 администратору")
+                logging.exception("Не удалось отправить MP4 документом администратору")
     except Exception as e:
         logging.exception("❌ Ошибка автоматической публикации сторис")
         if ADMIN_CHAT_ID:
