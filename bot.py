@@ -14,7 +14,7 @@ import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v13-polling-webservice-20261123"
+BOT_VERSION = "video-stories-v14-video-ffmpeg-20261123"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -660,8 +660,19 @@ def generate_video_story(video_path, title, content, rubric, highlight_words, th
     """MP4: исходный шаблон без изменений, видео только вместо фото."""
     import tempfile
     import shutil
-    if not shutil.which("ffmpeg"):
-        raise RuntimeError("FFmpeg не установлен. Добавьте его в Dockerfile.")
+    # На Render Python Web Service системный ffmpeg обычно отсутствует.
+    # imageio-ffmpeg устанавливает собственный исполняемый файл через pip.
+    try:
+        import imageio_ffmpeg
+        ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+    except Exception as exc:
+        ffmpeg_bin = shutil.which("ffmpeg")
+        if not ffmpeg_bin:
+            raise RuntimeError(
+                "FFmpeg недоступен. Добавьте imageio-ffmpeg==0.6.0 "
+                "в requirements.txt и выполните новый Deploy."
+            ) from exc
+    logging.info("🎬 FFmpeg: %s", ffmpeg_bin)
     if template not in ("classic", "insta"):
         raise ValueError("Неизвестный шаблон: " + str(template))
 
@@ -704,7 +715,7 @@ def generate_video_story(video_path, title, content, rubric, highlight_words, th
             f"format=yuv420p[outv]"
         )
         cmd = [
-            "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+            ffmpeg_bin, "-hide_banner", "-loglevel", "error", "-y",
             "-i", video_path,
             "-loop", "1", "-framerate", "30", "-i", base_path,
             "-filter_complex", filters,
@@ -714,9 +725,10 @@ def generate_video_story(video_path, title, content, rubric, highlight_words, th
             "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart", out_path,
         ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=240)
         if result.returncode != 0:
-            raise RuntimeError("Ошибка FFmpeg: " + result.stderr[-1500:])
+            logging.error("❌ FFmpeg stderr: %s", result.stderr[-3000:])
+            raise RuntimeError("Ошибка FFmpeg: " + result.stderr[-1200:])
         if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
             raise RuntimeError("FFmpeg не создал итоговый MP4")
         return out_path
@@ -1024,7 +1036,7 @@ async def process_rubric_callback(cb: types.CallbackQuery):
 
     if is_video:
         await bot.send_message(user_id, "⏳ Обрабатываю видео (до 60 сек) — это займёт немного времени...")
-        out_path = f"output_video_{user_id}.mp4"
+        out_path = f"output_video_{user_id}_{__import__('uuid').uuid4().hex}.mp4"
         try:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
