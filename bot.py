@@ -14,7 +14,7 @@ import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v14-video-ffmpeg-20261123"
+BOT_VERSION = "video-stories-v15-resilient-getupdates-20261123"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -1230,32 +1230,59 @@ async def health(request):
 
 
 async def polling_worker(app):
-    # Даём HTTP-серверу запуститься до подключения Telegram.
+    """Получаем обновления без повторного запуска aiogram Dispatcher.
+
+    dp.start_polling() в aiogram 2 нельзя вызывать второй раз после
+    TerminatedByOtherGetUpdates: он оставляет внутренний флаг polling.
+    Поэтому используем Bot.get_updates() и существующие обработчики dp.
+    """
     await asyncio.sleep(2)
+    offset = None
+    allowed = ["message", "callback_query", "channel_post"]
     while True:
         try:
-            # Важно: удалить webhook ПЕРЕД первым getUpdates.
+            # Удаление webhook необходимо только при запуске polling.
             await bot.delete_webhook(drop_pending_updates=False)
             info = await bot.get_webhook_info()
             if info.url:
-                logging.error("❌ Webhook всё ещё активен; повторная попытка через 10 секунд")
+                logging.error("❌ Webhook активен; повторная проверка через 10 секунд")
                 await asyncio.sleep(10)
                 continue
-            logging.info("✅ Webhook удалён, запускаю polling")
-            # reset_webhook=False: мы уже удалили webhook и сохранили очередь.
-            await dp.start_polling(
-                reset_webhook=False,
-                timeout=25,
-                relax=1,
-                error_sleep=10,
-                allowed_updates=["message", "callback_query", "channel_post"],
-            )
-            logging.warning("⚠️ Polling завершился; повторный запуск через 10 секунд")
+            logging.info("✅ Webhook удалён, получение обновлений через getUpdates")
+            break
         except asyncio.CancelledError:
             raise
         except Exception:
-            logging.exception("❌ Ошибка polling. Повтор через 10 секунд")
-        await asyncio.sleep(10)
+            logging.exception("❌ Не удалось отключить Webhook; повтор через 10 секунд")
+            await asyncio.sleep(10)
+
+    while True:
+        try:
+            updates = await bot.get_updates(
+                offset=offset,
+                timeout=25,
+                limit=100,
+                allowed_updates=allowed,
+            )
+            for update in updates:
+                # Передаём обновления тем же зарегистрированным обработчикам.
+                try:
+                    await dp.process_update(update)
+                except asyncio.CancelledError:
+                    raise
+                except Exception:
+                    logging.exception("❌ Ошибка обработки Telegram update %s", update.update_id)
+                # Следующий запрос подтвердит обработанные сообщения.
+                offset = update.update_id + 1
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logging.warning(
+                "⚠️ Ошибка getUpdates (%s: %s). Повтор через 15 секунд. "
+                "Если конфликт повторяется, проверьте другие запущенные экземпляры бота.",
+                type(exc).__name__, exc,
+            )
+            await asyncio.sleep(15)
 
 
 async def app_startup(app):
