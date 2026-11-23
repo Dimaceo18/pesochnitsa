@@ -13,7 +13,7 @@ from aiogram.utils.exceptions import TerminatedByOtherGetUpdates
 import textwrap
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v4"
+BOT_VERSION = "video-stories-v6-channel-autopublish"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -28,6 +28,13 @@ if ADMIN_CHAT_ID:
         logging.warning("⚠️ ADMIN_CHAT_ID должен быть числом")
 else:
     logging.warning("⚠️ ADMIN_CHAT_ID не задан")
+
+# Канал публикации: если не задан, публикуем в том же канале, где вышел пост.
+# Для отдельного канала укажите STORY_CHANNEL_ID=-100... или @username.
+STORY_CHANNEL_ID = os.getenv("STORY_CHANNEL_ID", "").strip()
+# Необязательно: обрабатывать только один исходный канал.
+STORY_SOURCE_CHANNEL_ID = os.getenv("STORY_SOURCE_CHANNEL_ID", "").strip()
+AUTO_STORY_MARKER = "🎞 Автосторис"
 
 FONT_PATHS = [
     "Inter-Black.ttf", "Inter-Bold.ttf", "Inter-Regular.ttf", "Inter-Medium.ttf",
@@ -89,7 +96,7 @@ bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
 
-VIDEO_MAX_DURATION = 30
+VIDEO_MAX_DURATION = 60
 
 
 # ========== УТИЛИТЫ ==========
@@ -636,65 +643,66 @@ async def generate_story_insta(photo_path, title, content, theme="dark"):
                     pos_y += sh + I_TEXT_LINE_GAP
             pos_y += I_TEXT_PARA_GAP
 
-    out = f"output_story_insta_{theme}.png"
+    out = f"output_story_insta_{theme}_{os.getpid()}_{__import__('threading').get_ident()}.png"
     canvas.save(out, format='PNG')
     return out
 
 
 # ========== ВИДЕО-СТОРИС ==========
-def generate_video_story(video_path, title, content, rubric, highlight_words, theme, out_path):
-    logging.info(f"🎬 Старт генерации видео: {video_path} → {out_path}")
-    base = render_base_canvas(
-        title, content, rubric, highlight_words, theme,
-        photo_path=None, transparent_top=True
-    )
-    base_path = f"base_{os.path.basename(out_path)}.png"
-    base.save(base_path, format='PNG')
-    logging.info(f"🖼 Подложка сохранена: {base_path}")
+def generate_video_story(video_path, title, content, rubric, highlight_words, theme, out_path, template="classic"):
+    """Вставляет видео вместо фото, сохраняя текстовую часть шаблона."""
+    import tempfile
+    import shutil
+    if not shutil.which("ffmpeg") or not shutil.which("ffprobe"):
+        raise RuntimeError("На сервере отсутствует ffmpeg/ffprobe. Установите ffmpeg в Dockerfile.")
+    if template == "insta":
+        # Генератор инста-шаблона рисует текст и плашки под фото.
+        # Используем тот же рендер, затем закрываем область фото видео.
+        import asyncio as _asyncio
+        overlay_path = _asyncio.run(generate_story_insta(None, title, content, theme))
+        vw, vh, top = I_PHOTO_WIDTH, I_PHOTO_HEIGHT, I_PHOTO_TOP
+    else:
+        overlay = render_base_canvas(title, content, rubric, highlight_words, theme,
+                                     photo_path=None, transparent_top=True)
+        overlay_path = None
+        vw, vh, top = PHOTO_WIDTH, PHOTO_HEIGHT, PHOTO_TOP
 
-    filter_complex = (
-        f"[0:v]trim=0:{VIDEO_MAX_DURATION},setpts=PTS-STARTPTS,"
-        f"scale={PHOTO_WIDTH}:{PHOTO_HEIGHT}:force_original_aspect_ratio=increase,"
-        f"crop={PHOTO_WIDTH}:{PHOTO_HEIGHT},setsar=1,fps=30[v];"
-        f"[1:v][v]overlay=0:0:shortest=0[outv]"
-    )
-
-    cmd = [
-        "ffmpeg", "-y",
-        "-i", video_path,
-        "-loop", "1", "-i", base_path,
-        "-filter_complex", filter_complex,
-        "-map", "[outv]",
-        "-map", "0:a?",
-        "-t", str(VIDEO_MAX_DURATION),
-        "-c:v", "libx264",
-        "-pix_fmt", "yuv420p",
-        "-preset", "veryfast",
-        "-crf", "23",
-        "-c:a", "aac",
-        "-b:a", "128k",
-        "-movflags", "+faststart",
-        out_path,
-    ]
-
-    logging.info(f"🎬 FFmpeg: {' '.join(cmd)}")
-    result = subprocess.run(cmd, capture_output=True, text=True)
-    try:
-        os.remove(base_path)
-    except Exception:
-        pass
-
-    if result.returncode != 0:
-        logging.error(f"❌ FFmpeg returncode={result.returncode}")
-        logging.error(f"❌ FFmpeg stderr:\n{result.stderr}")
-        raise RuntimeError(f"FFmpeg failed ({result.returncode}): {result.stderr[-800:]}")
-
-    if not os.path.exists(out_path) or os.path.getsize(out_path) == 0:
-        raise RuntimeError(f"FFmpeg завершился успешно, но файл {out_path} пуст или отсутствует")
-
-    size_mb = os.path.getsize(out_path) / (1024 * 1024)
-    logging.info(f"✅ Видео готово: {out_path} ({size_mb:.2f} MB)")
-    return out_path
+    with tempfile.TemporaryDirectory(prefix="story_video_") as td:
+        base_path = os.path.join(td, "layout.png")
+        if template == "insta":
+            try:
+                with Image.open(overlay_path) as original:
+                    overlay = original.convert("RGBA")
+            finally:
+                if os.path.exists(overlay_path):
+                    os.remove(overlay_path)
+        # Прозрачное окно для видео, неизменный текст/оформление ниже.
+        overlay.paste((0, 0, 0, 0), (0, top, vw, top + vh))
+        overlay.save(base_path)
+        filter_complex = (
+            f"[0:v]trim=duration={VIDEO_MAX_DURATION},setpts=PTS-STARTPTS,"
+            f"scale={vw}:{vh}:force_original_aspect_ratio=increase,"
+            f"crop={vw}:{vh},setsar=1,fps=30,format=yuv420p[clip];"
+            f"[1:v][clip]overlay=0:{top}:shortest=1:format=auto[composed];"
+            f"[composed]format=yuv420p[outv]"
+        )
+        cmd = ["ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
+               "-loop", "1", "-framerate", "30", "-i", base_path,
+               "-i", video_path,
+               "-filter_complex", filter_complex,
+               "-map", "[outv]", "-map", "1:a?", "-t", str(VIDEO_MAX_DURATION),
+               "-c:v", "libx264", "-preset", "veryfast", "-crf", "25",
+               "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "128k",
+               "-movflags", "+faststart", out_path]
+        # Важно: первый вход статичный фон, второй вход видео.
+        filter_complex = filter_complex.replace("[0:v]trim", "[1:v]trim").replace("[1:v][clip]overlay", "[0:v][clip]overlay")
+        cmd[cmd.index("-filter_complex") + 1] = filter_complex
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError("FFmpeg: " + result.stderr[-1200:])
+        if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+            raise RuntimeError("FFmpeg не создал видео")
+        return out_path
 
 
 # ========== КЛАВИАТУРЫ ==========
@@ -998,23 +1006,26 @@ async def process_rubric_callback(cb: types.CallbackQuery):
         return
 
     if is_video:
-        await bot.send_message(user_id, "⏳ Обрабатываю видео (до 30 сек) — это займёт немного времени...")
+        await bot.send_message(user_id, "⏳ Обрабатываю видео (до 60 сек) — это займёт немного времени...")
         out_path = f"output_video_{user_id}.mp4"
         try:
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
                 generate_video_story,
-                photo_path, title, content, rubric, highlight_words, theme, out_path
+                photo_path, title, content, rubric, highlight_words, theme, out_path, template
             )
             logging.info(f"📤 Отправляю видео: {out_path}")
             with open(out_path, 'rb') as f:
                 await bot.send_video(
                     chat_id=user_id,
                     video=f,
-                    duration=VIDEO_MAX_DURATION,
-                    caption=f"✅ Готово! ({'🌙' if theme == 'dark' else '☀️'} · {rubric or 'без рубрики'})"
+                                        caption=f"✅ Готово! ({'🌙' if theme == 'dark' else '☀️'} · {rubric or 'без рубрики'})"
                 )
+            with open(out_path, 'rb') as f:
+                await bot.send_document(chat_id=user_id, document=f,
+                                        caption="📥 Скачать готовую сторис MP4",
+                                        filename=f"story_{user_id}.mp4")
             logging.info(f"✅ Видео отправлено пользователю {user_id}")
         except Exception as e:
             logging.exception("❌ Video generation failed")
@@ -1051,125 +1062,119 @@ async def process_rubric_callback(cb: types.CallbackQuery):
         user_data.pop(user_id, None)
 
 
-# ========== АВТОПОСТИНГ ИЗ КАНАЛА ==========
+# ========== АВТОМАТИЧЕСКАЯ СТОРИС ИЗ ПОСТА КАНАЛА ==========
 @dp.channel_post_handler(content_types=['photo', 'document', 'video', 'text'])
 async def handle_channel_post(message: types.Message):
-    chat_title = message.chat.title or str(message.chat.id)
-    logging.info(f"📢 Новый пост в канале «{chat_title}» (id={message.chat.id})")
-
-    text = message.text or message.caption or ""
-    if not text.strip():
-        logging.info("⏭ Пост без текста — пропускаю")
+    source_id = message.chat.id
+    if STORY_SOURCE_CHANNEL_ID and str(source_id) != STORY_SOURCE_CHANNEL_ID and (message.chat.username or "").lower() != STORY_SOURCE_CHANNEL_ID.lstrip("@").lower():
         return
 
-    target_chat = ADMIN_CHAT_ID if ADMIN_CHAT_ID else message.chat.id
+    # Не обрабатываем собственные сторис повторно, даже если бот публикует
+    # результат в том же исходном канале.
+    if message.from_user and message.from_user.is_bot:
+        me = await bot.get_me()
+        if message.from_user.id == me.id:
+            return
+    if message.sender_chat and message.sender_chat.id == source_id:
+        # У обычных постов sender_chat тоже совпадает с каналом, поэтому
+        # ориентируемся на метку в подписи, а не на sender_chat.
+        pass
+    raw_text = message.text or message.caption or ""
+    if raw_text.startswith(AUTO_STORY_MARKER) or not raw_text.strip():
+        return
 
     media_path = None
     is_video = False
+    output_path = None
+    destination = STORY_CHANNEL_ID or source_id
+    chat_title = message.chat.title or str(source_id)
     try:
         if message.photo:
-            f = await bot.get_file(message.photo[-1].file_id)
-            media_path = f"temp_ch_{message.chat.id}_{message.message_id}.jpg"
-            await bot.download_file(f.file_path, media_path)
+            media = message.photo[-1]
+            suffix = ".jpg"
         elif message.video:
-            f = await bot.get_file(message.video.file_id)
-            media_path = f"temp_ch_{message.chat.id}_{message.message_id}.mp4"
-            await bot.download_file(f.file_path, media_path)
+            media = message.video
+            suffix = ".mp4"
             is_video = True
-        elif message.document and message.document.mime_type:
-            mt = message.document.mime_type
-            if mt.startswith('image/'):
-                f = await bot.get_file(message.document.file_id)
-                media_path = f"temp_ch_{message.chat.id}_{message.message_id}.jpg"
-                await bot.download_file(f.file_path, media_path)
-            elif mt.startswith('video/'):
-                f = await bot.get_file(message.document.file_id)
-                media_path = f"temp_ch_{message.chat.id}_{message.message_id}.mp4"
-                await bot.download_file(f.file_path, media_path)
-                is_video = True
-    except Exception as e:
-        logging.error(f"❌ Скачивание медиа из канала: {e}")
-
-    text = text.replace("**Текст отсутствует**", "").strip()
-    lines = text.split('\n')
-    clean = [l.strip() for l in lines
-             if l.strip() and not l.strip().startswith(('Подписаться', '@', '#'))]
-    text = normalize_lists(remove_emojis('\n'.join(clean)))
-
-    title, content = parse_text(text)
-    if not title and text:
-        sentences = re.split(r'(?<=[.!?])\s+', text.strip())
-        title = sentences[0] if sentences else "ЗАГОЛОВОК НОВОСТИ"
-        content = ". ".join(sentences[1:]) if len(sentences) > 1 else "Текст отсутствует"
-    if not title:
-        title = "ЗАГОЛОВОК НОВОСТИ"
-    if not content:
-        content = "Текст отсутствует"
-    content = normalize_lists(content)
-
-    media_for_gen = media_path if media_path else "nonexistent.jpg"
-    generated = []
-
-    try:
-        await bot.send_message(
-            target_chat,
-            f"📢 Новый пост в канале «{chat_title}»\n"
-            f"{'🎬 Обнаружено видео — генерирую видео-сторис (30 сек)' if is_video else '🎨 Генерирую 4 варианта сторис'}"
-        )
-
-        if is_video:
-            out_v = f"ch_video_{message.chat.id}_{message.message_id}.mp4"
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None, generate_video_story,
-                media_for_gen, title, content, None, [], "dark", out_v
-            )
-            generated.append(out_v)
-            logging.info(f"📤 Отправляю видео из канала: {out_v}")
-            with open(out_v, 'rb') as f:
-                await bot.send_video(
-                    chat_id=target_chat,
-                    video=f,
-                    duration=VIDEO_MAX_DURATION,
-                    caption=f"🎬 Видео-сторис (30 сек)\n\n📝 {title[:120]}"
-                )
-            logging.info(f"✅ Видео из канала отправлено в {target_chat}")
+        elif message.document and (message.document.mime_type or "").startswith(("image/", "video/")):
+            media = message.document
+            is_video = message.document.mime_type.startswith("video/")
+            suffix = ".mp4" if is_video else ".jpg"
         else:
-            variants = [
-                ("classic", "light", "🎨 Классик · ☀️ Светлая"),
-                ("classic", "dark",  "🎨 Классик · 🌙 Тёмная"),
-                ("insta",   "light", "📸 Инста-дизайн · ☀️ Светлая"),
-                ("insta",   "dark",  "📸 Инста-дизайн · 🌙 Тёмная"),
-            ]
-            for template, theme, label in variants:
-                try:
-                    if template == "classic":
-                        out_path = await generate_story_classic(media_for_gen, title, content, None, [], theme)
-                    else:
-                        out_path = await generate_story_insta(media_for_gen, title, content, theme)
-                    generated.append(out_path)
-                    with open(out_path, 'rb') as f:
-                        await bot.send_photo(chat_id=target_chat, photo=f,
-                                             caption=f"{label}\n\n📝 {title[:120]}")
-                except Exception as e:
-                    logging.error(f"❌ {template}/{theme}: {e}")
+            logging.info("⏭ Пост без фото или видео: %s/%s", source_id, message.message_id)
+            return
 
-        logging.info(f"✅ Сторис для «{chat_title}» отправлены в {target_chat}")
+        # Уникальные имена исключают пересечение файлов при параллельных постах.
+        key = f"{abs(source_id)}_{message.message_id}"
+        media_path = f"source_story_{key}{suffix}"
+        f = await bot.get_file(media.file_id)
+        await bot.download_file(f.file_path, media_path)
 
-    except Exception as e:
-        logging.exception("❌ Channel post processing failed")
-        try:
-            await bot.send_message(target_chat, f"❌ Ошибка: {e}")
-        except Exception:
-            pass
+        text = raw_text.replace("**Текст отсутствует**", "").strip()
+        lines = text.split("\n")
+        clean = [line.strip() for line in lines
+                 if line.strip() and not line.strip().startswith(("Подписаться", "@", "#"))]
+        text = normalize_lists(remove_emojis("\n".join(clean)))
+        if not text:
+            return
+        title, content = parse_text(text)
+        title = title or "ЗАГОЛОВОК НОВОСТИ"
+        content = normalize_lists(content or "Текст отсутствует")
 
-    finally:
-        for p in [media_path] + generated:
+        # Единый автоматический стиль: Инста-дизайн, тёмный фон.
+        if is_video:
+            output_path = f"story_{key}.mp4"
+            await asyncio.to_thread(
+                generate_video_story, media_path, title, content,
+                None, [], "dark", output_path, "insta"
+            )
+            with open(output_path, "rb") as video_file:
+                await bot.send_video(
+                    chat_id=destination,
+                    video=video_file,
+                    caption=f"{AUTO_STORY_MARKER} | {title[:140]}",
+                    supports_streaming=True,
+                )
+        else:
+            # Статический генератор использует общий файл результата;
+            # копируем его в уникальный файл до отправки.
+            import shutil
+            generated = await generate_story_insta(media_path, title, content, theme="dark")
+            output_path = f"story_{key}.png"
+            shutil.copyfile(generated, output_path)
+            with open(output_path, "rb") as photo_file:
+                await bot.send_photo(
+                    chat_id=destination,
+                    photo=photo_file,
+                    caption=f"{AUTO_STORY_MARKER} | {title[:140]}",
+                )
+
+        logging.info("✅ Сторис из %s/%s опубликована в %s", source_id, message.message_id, destination)
+        # Администратору отдельно отправляем MP4 документом для скачивания.
+        if is_video and ADMIN_CHAT_ID and str(ADMIN_CHAT_ID) != str(destination):
             try:
-                if p and os.path.exists(p):
-                    os.remove(p)
+                with open(output_path, "rb") as video_file:
+                    await bot.send_document(
+                        chat_id=ADMIN_CHAT_ID,
+                        document=video_file,
+                        caption=f"📥 MP4-сторис из канала «{chat_title}»",
+                    )
             except Exception:
-                pass
+                logging.exception("Не удалось отправить копию MP4 администратору")
+    except Exception as e:
+        logging.exception("❌ Ошибка автоматической публикации сторис")
+        if ADMIN_CHAT_ID:
+            try:
+                await bot.send_message(ADMIN_CHAT_ID, f"❌ Ошибка сторис для «{chat_title}»: {str(e)[:800]}")
+            except Exception:
+                logging.exception("Не удалось уведомить администратора")
+    finally:
+        for path in (media_path, output_path):
+            if path and os.path.exists(path):
+                try:
+                    os.remove(path)
+                except OSError:
+                    logging.warning("Не удалось удалить временный файл %s", path)
 
 
 # ========== ЗАПУСК ==========
