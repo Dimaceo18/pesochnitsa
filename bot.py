@@ -8,12 +8,13 @@ import unicodedata
 from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
+from aiogram.dispatcher.middlewares import BaseMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v10-webhook-only-20261123"
+BOT_VERSION = "video-stories-v11-webhook-diagnostics-20261123"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -94,6 +95,13 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(bot)
 dp.middleware.setup(LoggingMiddleware())
+
+class IncomingUpdateLogger(BaseMiddleware):
+    async def on_pre_process_update(self, update, data):
+        kind = "message" if update.message else "channel_post" if update.channel_post else "callback_query" if update.callback_query else "other"
+        logging.info("📨 TELEGRAM UPDATE RECEIVED: id=%s type=%s", update.update_id, kind)
+
+dp.middleware.setup(IncomingUpdateLogger())
 
 VIDEO_MAX_DURATION = 60
 
@@ -1205,6 +1213,22 @@ WEBHOOK_HOST = "0.0.0.0"
 WEBHOOK_PORT = int(os.getenv("PORT", "10000"))
 
 
+async def monitor_webhook():
+    expected = WEBHOOK_BASE_URL + WEBHOOK_PATH
+    while True:
+        await asyncio.sleep(45)
+        try:
+            info = await bot.get_webhook_info()
+            if info.url != expected:
+                logging.error("❌ WEBHOOK CHANGED BY ANOTHER PROCESS: expected_url_matches=False; check other deployments")
+            elif getattr(info, "last_error_message", None):
+                logging.error("❌ TELEGRAM WEBHOOK DELIVERY ERROR: %s", info.last_error_message)
+            else:
+                logging.info("💚 WEBHOOK OK: pending=%s", info.pending_update_count)
+        except Exception:
+            logging.exception("Webhook status check failed")
+
+
 async def on_startup(dp):
     if not WEBHOOK_BASE_URL or not WEBHOOK_BASE_URL.startswith("https://"):
         raise RuntimeError(
@@ -1218,6 +1242,8 @@ async def on_startup(dp):
         drop_pending_updates=False,
     )
     me = await bot.get_me()
+    info = await bot.get_webhook_info()
+    logging.info("🔎 WEBHOOK STATUS: url_matches=%s pending=%s last_error=%s", info.url == webhook_address, info.pending_update_count, getattr(info, "last_error_message", None))
     logging.info("🚀 Версия: %s", BOT_VERSION)
     logging.info("🔒 WEBHOOK ONLY: getUpdates/polling НЕ запускается")
     logging.info("✅ Webhook установлен: %s/telegram/[скрытый путь]", WEBHOOK_BASE_URL)
@@ -1226,9 +1252,17 @@ async def on_startup(dp):
     if not ADMIN_CHAT_ID:
         logging.error("❌ Автосторис не будут отправляться: установите ADMIN_CHAT_ID")
     logging.info("📡 Источник: %s", STORY_SOURCE_CHANNEL_ID or "все каналы, где бот администратор")
+    dp["webhook_monitor_task"] = asyncio.create_task(monitor_webhook())
 
 
 async def on_shutdown(dp):
+    task = dp.get("webhook_monitor_task")
+    if task:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
     # Не удаляем webhook: при rolling deploy старый экземпляр
     # не должен сбрасывать webhook нового экземпляра.
     await bot.close()
