@@ -9,12 +9,11 @@ from PIL import Image, ImageDraw, ImageFont, ImageEnhance
 from aiogram import Bot, Dispatcher, types
 from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.utils.exceptions import TerminatedByOtherGetUpdates
 import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v9-webhook-private-inbox"
+BOT_VERSION = "video-stories-v10-webhook-only-20261123"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -396,7 +395,7 @@ def render_base_canvas(title, content, rubric, highlight_words, theme, photo_pat
 # ========== СТАТИЧНЫЕ ГЕНЕРАТОРЫ ==========
 async def generate_story_classic(photo_path, title, content, rubric, highlight_words, theme="light"):
     canvas = render_base_canvas(title, content, rubric, highlight_words, theme, photo_path)
-    out = f"output_story_classic_{theme}.png"
+    out = f"output_story_classic_{theme}_{os.getpid()}_{__import__('uuid').uuid4().hex}.png"
     canvas.save(out, format='PNG')
     return out
 
@@ -643,7 +642,7 @@ async def generate_story_insta(photo_path, title, content, theme="dark"):
                     pos_y += sh + I_TEXT_LINE_GAP
             pos_y += I_TEXT_PARA_GAP
 
-    out = f"output_story_insta_{theme}_{os.getpid()}_{__import__('threading').get_ident()}.png"
+    out = f"output_story_insta_{theme}_{os.getpid()}_{__import__('uuid').uuid4().hex}.png"
     canvas.save(out, format='PNG')
     return out
 
@@ -1220,9 +1219,12 @@ async def on_startup(dp):
     )
     me = await bot.get_me()
     logging.info("🚀 Версия: %s", BOT_VERSION)
+    logging.info("🔒 WEBHOOK ONLY: getUpdates/polling НЕ запускается")
     logging.info("✅ Webhook установлен: %s/telegram/[скрытый путь]", WEBHOOK_BASE_URL)
     logging.info("✅ Бот: @%s", me.username)
     logging.info("📥 ADMIN_CHAT_ID: %s", ADMIN_CHAT_ID or "НЕ ЗАДАН")
+    if not ADMIN_CHAT_ID:
+        logging.error("❌ Автосторис не будут отправляться: установите ADMIN_CHAT_ID")
     logging.info("📡 Источник: %s", STORY_SOURCE_CHANNEL_ID or "все каналы, где бот администратор")
 
 
@@ -1234,7 +1236,7 @@ async def on_shutdown(dp):
 
 if __name__ == "__main__":
     from aiogram import executor
-    logging.info("Запуск Webhook на 0.0.0.0:%s", WEBHOOK_PORT)
+    logging.info("🚀 START %s: WEBHOOK ONLY, PORT=%s", BOT_VERSION, WEBHOOK_PORT)
     executor.start_webhook(
         dispatcher=dp,
         webhook_path=WEBHOOK_PATH,
