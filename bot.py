@@ -11,9 +11,10 @@ from aiogram.contrib.middlewares.logging import LoggingMiddleware
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.utils.exceptions import TerminatedByOtherGetUpdates
 import textwrap
+import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v8-private-inbox"
+BOT_VERSION = "video-stories-v9-webhook-private-inbox"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -1154,6 +1155,8 @@ async def handle_channel_post(message: types.Message):
             generated = await generate_story_insta(media_path, title, content, theme="dark")
             output_path = f"story_{key}.png"
             shutil.copyfile(generated, output_path)
+            if os.path.exists(generated):
+                os.remove(generated)
             with open(output_path, "rb") as photo_file:
                 await bot.send_photo(
                     chat_id=destination,
@@ -1190,49 +1193,54 @@ async def handle_channel_post(message: types.Message):
                     logging.warning("Не удалось удалить временный файл %s", path)
 
 
-# ========== ЗАПУСК ==========
+# ========== WEBHOOK ДЛЯ RENDER WEB SERVICE ==========
+# Укажите WEBHOOK_URL=https://имя-сервиса.onrender.com
+# Если WEBHOOK_URL не задан, используется RENDER_EXTERNAL_URL (при наличии).
+# Никаких getUpdates и delete_webhook при запуске.
+WEBHOOK_BASE_URL = (
+    os.getenv("WEBHOOK_URL", "").strip().rstrip("/")
+    or os.getenv("RENDER_EXTERNAL_URL", "").strip().rstrip("/")
+)
+WEBHOOK_PATH = "/telegram/" + hashlib.sha256(API_TOKEN.encode("utf-8")).hexdigest()[:32]
+WEBHOOK_HOST = "0.0.0.0"
+WEBHOOK_PORT = int(os.getenv("PORT", "10000"))
+
+
 async def on_startup(dp):
-    print(f"🚀 BOT VERSION: {BOT_VERSION}")
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        print("✅ Вебхук удалён")
-    except Exception as e:
-        print(f"⚠️ delete_webhook: {e}")
-    await asyncio.sleep(3)
-    try:
-        me = await bot.get_me()
-        print(f"✅ Бот: @{me.username} (id={me.id})")
-    except Exception as e:
-        print(f"⚠️ get_me: {e}")
-    print(f"📥 ADMIN_CHAT_ID: {ADMIN_CHAT_ID or 'не задан (в канал)'}")
+    if not WEBHOOK_BASE_URL or not WEBHOOK_BASE_URL.startswith("https://"):
+        raise RuntimeError(
+            "Укажите WEBHOOK_URL=https://ВАШ-СЕРВИС.onrender.com в Environment Render "
+            "(или задайте RENDER_EXTERNAL_URL)."
+        )
+    webhook_address = WEBHOOK_BASE_URL + WEBHOOK_PATH
+    await bot.set_webhook(
+        url=webhook_address,
+        allowed_updates=["message", "callback_query", "channel_post"],
+        drop_pending_updates=False,
+    )
+    me = await bot.get_me()
+    logging.info("🚀 Версия: %s", BOT_VERSION)
+    logging.info("✅ Webhook установлен: %s/telegram/[скрытый путь]", WEBHOOK_BASE_URL)
+    logging.info("✅ Бот: @%s", me.username)
+    logging.info("📥 ADMIN_CHAT_ID: %s", ADMIN_CHAT_ID or "НЕ ЗАДАН")
+    logging.info("📡 Источник: %s", STORY_SOURCE_CHANNEL_ID or "все каналы, где бот администратор")
 
 
 async def on_shutdown(dp):
-    try:
-        await bot.close()
-        print("✅ Сессия закрыта")
-    except Exception as e:
-        print(f"⚠️ close: {e}")
+    # Не удаляем webhook: при rolling deploy старый экземпляр
+    # не должен сбрасывать webhook нового экземпляра.
+    await bot.close()
 
 
 if __name__ == "__main__":
     from aiogram import executor
-    print(f"🚀 Бот запускается... VERSION: {BOT_VERSION}")
-    max_attempts = 3
-    for attempt in range(1, max_attempts + 1):
-        try:
-            executor.start_polling(
-                dp,
-                skip_updates=True,
-                allowed_updates=['message', 'callback_query', 'channel_post'],
-                on_startup=on_startup,
-                on_shutdown=on_shutdown,
-            )
-            break
-        except TerminatedByOtherGetUpdates:
-            print(f"⚠️ Конфликт getUpdates ({attempt}/{max_attempts}), ждём 5 сек...")
-            import time
-            time.sleep(5)
-        except Exception as e:
-            print(f"❌ Ошибка запуска: {e}")
-            break
+    logging.info("Запуск Webhook на 0.0.0.0:%s", WEBHOOK_PORT)
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path=WEBHOOK_PATH,
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=False,
+        host=WEBHOOK_HOST,
+        port=WEBHOOK_PORT,
+    )
