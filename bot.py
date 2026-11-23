@@ -14,7 +14,7 @@ import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v17-stable-video-20261123"
+BOT_VERSION = "video-stories-v18-overlay-background-20261123"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -104,6 +104,7 @@ class IncomingUpdateLogger(BaseMiddleware):
 dp.middleware.setup(IncomingUpdateLogger())
 
 VIDEO_MAX_DURATION = 60
+app_video_tasks = set()
 
 
 # ========== УТИЛИТЫ ==========
@@ -711,7 +712,8 @@ def generate_video_story(video_path, title, content, rubric, highlight_words, th
             f"[0:v]trim=duration={VIDEO_MAX_DURATION},setpts=PTS-STARTPTS,"
             f"scale={vw}:{vh}:force_original_aspect_ratio=increase,"
             f"crop={vw}:{vh},setsar=1,fps=15,format=yuv420p[clip];"
-            f"[1:v][clip]overlay=0:{top}:shortest=1:format=auto,"
+            f"[clip]pad={overlay.width}:{overlay.height}:0:{top}:color=black[bg];"
+            f"[bg][1:v]overlay=0:0:shortest=1:format=auto,"
             f"format=yuv420p[outv]"
         )
         cmd = [
@@ -1059,7 +1061,7 @@ async def process_rubric_callback(cb: types.CallbackQuery):
         await bot.send_message(user_id, "❌ Не хватает данных. /start")
         return
 
-    if is_video:
+    async def _finish_video():
         await bot.send_message(user_id, "⏳ Обрабатываю видео (до 60 сек) — это займёт немного времени...")
         out_path = f"output_video_{user_id}_{__import__('uuid').uuid4().hex}.mp4"
         try:
@@ -1076,10 +1078,6 @@ async def process_rubric_callback(cb: types.CallbackQuery):
                     video=f,
                                         caption=f"✅ Готово! ({'🌙' if theme == 'dark' else '☀️'} · {rubric or 'без рубрики'})"
                 )
-            with open(out_path, 'rb') as f:
-                await bot.send_document(chat_id=user_id, document=f,
-                                        caption="📥 Скачать готовую сторис MP4",
-                                        filename=f"story_{user_id}.mp4")
             logging.info(f"✅ Видео отправлено пользователю {user_id}")
         except Exception as e:
             logging.exception("❌ Video generation failed")
@@ -1092,6 +1090,12 @@ async def process_rubric_callback(cb: types.CallbackQuery):
                 except Exception:
                     pass
             user_data.pop(user_id, None)
+
+    if is_video:
+        user_data[user_id]["step"] = "rendering_video"
+        task = asyncio.create_task(_finish_video())
+        app_video_tasks.add(task)
+        task.add_done_callback(app_video_tasks.discard)
         return
 
     await bot.send_message(
