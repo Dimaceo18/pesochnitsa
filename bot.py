@@ -14,7 +14,7 @@ import textwrap
 import hashlib
 
 # ========== КОНФИГ ==========
-BOT_VERSION = "video-stories-v18-overlay-background-20261123"
+BOT_VERSION = "video-stories-v19-auto-four-20261125"
 
 API_TOKEN = os.getenv("BOT_TOKEN")
 if not API_TOKEN:
@@ -702,6 +702,11 @@ def generate_video_story(video_path, title, content, rubric, highlight_words, th
             )
             vw, vh, top = PHOTO_WIDTH, PHOTO_HEIGHT, PHOTO_TOP
 
+        if template == "classic":
+            # Непрозрачный фон под текстом, включая белую тему.
+            background = Image.new("RGBA", overlay.size, "black" if theme == "dark" else "white")
+            background.alpha_composite(overlay)
+            overlay = background
         # Делаем прозрачной только зону исходной фотографии.
         overlay.paste((0, 0, 0, 0), (0, top, vw, top + vh))
         overlay.save(base_path, "PNG")
@@ -1121,8 +1126,25 @@ async def process_rubric_callback(cb: types.CallbackQuery):
 
 
 # ========== АВТОМАТИЧЕСКАЯ СТОРИС ИЗ ПОСТА КАНАЛА ==========
+auto_story_queue = asyncio.Queue()
+
 @dp.channel_post_handler(content_types=['photo', 'document', 'video', 'text'])
 async def handle_channel_post(message: types.Message):
+    await auto_story_queue.put(message)
+
+async def auto_story_worker():
+    Bot.set_current(bot)
+    Dispatcher.set_current(dp)
+    while True:
+        message = await auto_story_queue.get()
+        try:
+            await process_auto_story(message)
+        except Exception:
+            logging.exception("Ошибка очереди автосторис")
+        finally:
+            auto_story_queue.task_done()
+
+async def process_auto_story(message: types.Message):
     source_id = message.chat.id
     if STORY_SOURCE_CHANNEL_ID and str(source_id) != STORY_SOURCE_CHANNEL_ID and (message.chat.username or "").lower() != STORY_SOURCE_CHANNEL_ID.lstrip("@").lower():
         return
@@ -1182,49 +1204,46 @@ async def handle_channel_post(message: types.Message):
         title = title or "ЗАГОЛОВОК НОВОСТИ"
         content = normalize_lists(content or "Текст отсутствует")
 
-        # Единый автоматический стиль: Инста-дизайн, тёмный фон.
-        if is_video:
-            output_path = f"story_{key}.mp4"
-            await asyncio.to_thread(
-                generate_video_story, media_path, title, content,
-                None, [], "dark", output_path, "insta"
-            )
-            with open(output_path, "rb") as video_file:
-                await bot.send_video(
-                    chat_id=destination,
-                    video=video_file,
-                    caption=f"{AUTO_STORY_MARKER} | {title[:140]}",
-                    supports_streaming=True,
-                )
-        else:
-            # Статический генератор использует общий файл результата;
-            # копируем его в уникальный файл до отправки.
-            import shutil
-            generated = await generate_story_insta(media_path, title, content, theme="dark")
-            output_path = f"story_{key}.png"
-            shutil.copyfile(generated, output_path)
-            if os.path.exists(generated):
-                os.remove(generated)
-            with open(output_path, "rb") as photo_file:
-                await bot.send_photo(
-                    chat_id=destination,
-                    photo=photo_file,
-                    caption=f"{AUTO_STORY_MARKER} | {title[:140]}",
-                )
-
-        logging.info("✅ Сторис из %s/%s отправлена администратору %s", source_id, message.message_id, destination)
-        # Дополнительно отправляем MP4 документом, чтобы можно было скачать
-        # исходный файл без повторного сжатия Telegram.
-        if is_video:
+        # Четыре варианта последовательно, без параллельного кодирования.
+        variants = [("insta", "dark"), ("insta", "light"),
+                    ("classic", "dark"), ("classic", "light")]
+        for template, theme in variants:
+            output_path = None
+            label = ("Инста" if template == "insta" else "Классик") + " · " + (
+                "Чёрный фон" if theme == "dark" else "Белый фон")
+            caption = f"{AUTO_STORY_MARKER} | {label}\n{title[:140]}"
             try:
-                with open(output_path, "rb") as video_file:
-                    await bot.send_document(
-                        chat_id=ADMIN_CHAT_ID,
-                        document=video_file,
-                        caption=f"📥 MP4-сторис из канала «{chat_title}»",
+                if is_video:
+                    output_path = f"story_{key}_{template}_{theme}.mp4"
+                    await asyncio.to_thread(
+                        generate_video_story, media_path, title, content,
+                        None, [], theme, output_path, template
                     )
-            except Exception:
-                logging.exception("Не удалось отправить MP4 документом администратору")
+                    with open(output_path, "rb") as video_file:
+                        await bot.send_video(chat_id=destination, video=video_file,
+                                             caption=caption, supports_streaming=True)
+                else:
+                    if template == "insta":
+                        output_path = await generate_story_insta(media_path, title, content, theme=theme)
+                    else:
+                        output_path = await generate_story_classic(media_path, title, content, None, [], theme=theme)
+                    with open(output_path, "rb") as photo_file:
+                        await bot.send_photo(chat_id=destination, photo=photo_file, caption=caption)
+                logging.info("✅ Автосторис %s/%s: %s", source_id, message.message_id, label)
+            except Exception as exc:
+                logging.exception("❌ Автосторис: %s", label)
+                try:
+                    await bot.send_message(destination, f"❌ {label}: {str(exc)[:500]}")
+                except Exception:
+                    logging.exception("Не удалось уведомить администратора")
+            finally:
+                if output_path and os.path.exists(output_path):
+                    try:
+                        os.remove(output_path)
+                    except OSError:
+                        logging.warning("Не удалось удалить %s", output_path)
+                output_path = None
+
     except Exception as e:
         logging.exception("❌ Ошибка автоматической публикации сторис")
         if ADMIN_CHAT_ID:
@@ -1325,6 +1344,7 @@ async def app_startup(app):
     logging.info("📥 ADMIN_CHAT_ID: %s", ADMIN_CHAT_ID or "НЕ ЗАДАН")
     logging.info("📡 Источник: %s", STORY_SOURCE_CHANNEL_ID or "все каналы, где бот администратор")
     # Запускаем polling в том же event loop, не блокируя HTTP health endpoint.
+    app["auto_story_task"] = asyncio.create_task(auto_story_worker())
     app["polling_task"] = asyncio.create_task(polling_worker(app))
 
 
@@ -1334,6 +1354,13 @@ async def app_shutdown(app):
         task.cancel()
         try:
             await task
+        except asyncio.CancelledError:
+            pass
+    auto_task = app.get("auto_story_task")
+    if auto_task:
+        auto_task.cancel()
+        try:
+            await auto_task
         except asyncio.CancelledError:
             pass
     # При rolling deploy не удаляем webhook: новый экземпляр сам управляет им.
